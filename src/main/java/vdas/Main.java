@@ -86,7 +86,7 @@ public class Main {
                 System.out.println("Invalid selection. Please try again.");
                 listCommands(commands);
             }
-            in.close;
+            // scanner.close();
         }
     }
 }
