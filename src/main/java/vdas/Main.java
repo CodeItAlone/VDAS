@@ -24,7 +24,7 @@ public class Main {
 
         try {
             List<SystemCommand> commands = loader.loadCommands();
-            
+
             if (args.length > 0) {
                 // Execute command passed as argument
                 String commandName = args[0];
@@ -53,10 +53,13 @@ public class Main {
         System.out.println("Q. Quit");
     }
 
+    private static void interactiveSession(CommandLoader loader, CommandExecutor executor,
+            List<SystemCommand> commands) {
         Scanner scanner = new Scanner(System.in);
         while (true) {
             System.out.print("\nSelect a command (name or number) > ");
-            if (!scanner.hasNextLine()) break;
+            if (!scanner.hasNextLine())
+                break;
             String input = scanner.nextLine().trim();
 
             if (input.equalsIgnoreCase("q") || input.equalsIgnoreCase("quit")) {
@@ -64,7 +67,8 @@ public class Main {
                 break;
             }
 
-            if (input.isEmpty()) continue;
+            if (input.isEmpty())
+                continue;
 
             SystemCommand target = null;
             try {
@@ -82,6 +86,7 @@ public class Main {
                 System.out.println("Invalid selection. Please try again.");
                 listCommands(commands);
             }
+            in.close;
         }
     }
 }
