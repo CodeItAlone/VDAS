@@ -2,6 +2,7 @@ package vdas.config;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import vdas.intent.IntentNormalizer;
 import vdas.model.SystemCommand;
 
 import java.io.IOException;
@@ -30,7 +31,8 @@ public class CommandLoader {
                 throw new IOException("Configuration file '" + CONFIG_FILE + "' not found on classpath.");
             }
             try (InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
-                Type listType = new TypeToken<List<SystemCommand>>() {}.getType();
+                Type listType = new TypeToken<List<SystemCommand>>() {
+                }.getType();
                 List<SystemCommand> commands = new Gson().fromJson(reader, listType);
                 if (commands == null || commands.isEmpty()) {
                     throw new IOException("No commands found in '" + CONFIG_FILE + "'.");
@@ -41,15 +43,18 @@ public class CommandLoader {
     }
 
     /**
-     * Finds a command by its name (case-insensitive).
+     * Finds a command by its name using normalized comparison.
+     * "list files" (voice) matches "list-files" (config).
      *
      * @param commands list of available commands
-     * @param name     name to search for
+     * @param name     raw user input (voice or keyboard)
      * @return the matching SystemCommand, or null if not found
      */
     public SystemCommand findByName(List<SystemCommand> commands, String name) {
+        String normalizedInput = IntentNormalizer.normalize(name);
         return commands.stream()
-                .filter(cmd -> cmd.getName().equalsIgnoreCase(name))
+                .filter(cmd -> IntentNormalizer.normalizeCommandName(cmd.getName())
+                        .equals(normalizedInput))
                 .findFirst()
                 .orElse(null);
     }
