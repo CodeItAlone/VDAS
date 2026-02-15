@@ -5,6 +5,10 @@ target/
 mvnw
 mvnw.cmd
 bin/
+dependency-reduced-pom.xml
+
+# Vosk speech model (large binary, download separately)
+model/
 
 # IDE settings
 .idea/
