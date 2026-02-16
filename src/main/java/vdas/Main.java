@@ -2,12 +2,14 @@ package vdas;
 
 import vdas.config.CommandLoader;
 import vdas.executor.CommandExecutor;
+import vdas.intent.IntentResolver;
 import vdas.model.SystemCommand;
 import vdas.speech.SpeechInput;
 import vdas.speech.VoskSpeechInput;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Scanner;
 
 /**
@@ -16,8 +18,7 @@ import java.util.Scanner;
  */
 public class Main {
 
-    private static final String VOSK_MODEL_PATH =
-            "C:\\vosk-models\\vosk-model-small-en-us-0.15";
+    private static final String VOSK_MODEL_PATH = "C:\\vosk-models\\vosk-model-small-en-us-0.15";
 
     public static void main(String[] args) {
         System.out.println("========================================");
@@ -33,16 +34,17 @@ public class Main {
 
         try {
             List<SystemCommand> commands = loader.loadCommands();
+            IntentResolver intentResolver = new IntentResolver(commands);
 
             // ---------- CLI ARG MODE ----------
             if (args.length > 0) {
                 String commandName = args[0];
-                SystemCommand cmd = loader.findByName(commands, commandName);
+                Optional<SystemCommand> resolved = intentResolver.resolve(commandName);
 
-                if (cmd != null) {
-                    executor.execute(cmd);
+                if (resolved.isPresent()) {
+                    executor.execute(resolved.get());
                 } else {
-                    System.err.println("[ERROR] Command not found: " + commandName);
+                    System.err.println("[ERROR] No confident match for: " + commandName);
                 }
                 return;
             }
@@ -71,12 +73,11 @@ public class Main {
             // ---------- MAIN LOOP ----------
             listCommands(commands);
             interactiveSession(
-                    loader,
+                    intentResolver,
                     executor,
                     commands,
                     scanner,
-                    voiceMode ? speechInput : null
-            );
+                    voiceMode ? speechInput : null);
 
         } catch (IOException e) {
             System.err.println("[ERROR] Failed to start VDAS: " + e.getMessage());
@@ -98,12 +99,11 @@ public class Main {
     }
 
     private static void interactiveSession(
-            CommandLoader loader,
+            IntentResolver intentResolver,
             CommandExecutor executor,
             List<SystemCommand> commands,
             Scanner scanner,
-            SpeechInput speechInput
-    ) {
+            SpeechInput speechInput) {
 
         boolean voiceMode = (speechInput != null);
 
@@ -155,13 +155,17 @@ public class Main {
                     target = commands.get(index);
                 }
             } catch (NumberFormatException e) {
-                target = loader.findByName(commands, input);
+                Optional<SystemCommand> resolved = intentResolver.resolve(input);
+                if (resolved.isPresent()) {
+                    target = resolved.get();
+                } else {
+                    System.out.println("[INTENT] No confident match for: \"" + input + "\"");
+                }
             }
 
             if (target != null) {
                 executor.execute(target);
             } else {
-                System.out.println("Invalid selection: \"" + input + "\"");
                 listCommands(commands);
             }
         }
