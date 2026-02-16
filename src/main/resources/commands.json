@@ -2,14 +2,17 @@
   {
     "name": "list-files",
     "command": "dir /b",
-    "workingDirectory": "C:\\Users\\basomurmu\\Desktop\\VDAS"
+    "workingDirectory": "C:\\Users\\basomurmu\\Desktop\\VDAS",
+    "aliases": ["show files", "display files", "dir", "ls"]
   },
   {
     "name": "system-info",
-    "command": "systeminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\" /C:\"System Type\""
+    "command": "systeminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\" /C:\"System Type\"",
+    "aliases": ["sys info", "os info", "computer info", "system details"]
   },
   {
     "name": "java-version",
-    "command": "java -version"
+    "command": "java -version",
+    "aliases": ["check java", "java ver", "jdk version", "java info"]
   }
 ]
