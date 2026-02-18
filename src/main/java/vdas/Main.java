@@ -2,8 +2,14 @@ package vdas;
 
 import vdas.config.CommandLoader;
 import vdas.executor.CommandExecutor;
+import vdas.intent.IntentNormalizer;
 import vdas.intent.IntentResolver;
 import vdas.model.SystemCommand;
+import vdas.skill.FileSystemSkill;
+import vdas.skill.Intent;
+import vdas.skill.Skill;
+import vdas.skill.SkillRegistry;
+import vdas.skill.SystemInfoSkill;
 import vdas.speech.SpeechInput;
 import vdas.speech.VoskSpeechInput;
 
@@ -29,6 +35,11 @@ public class Main {
         CommandExecutor executor = new CommandExecutor();
         Scanner scanner = new Scanner(System.in);
 
+        // ── Skill registration (explicit, no reflection) ──
+        SkillRegistry skillRegistry = new SkillRegistry(List.of(
+                new SystemInfoSkill(executor),
+                new FileSystemSkill(executor)));
+
         SpeechInput speechInput = null;
         boolean voiceMode = false;
 
@@ -38,13 +49,16 @@ public class Main {
 
             // ---------- CLI ARG MODE ----------
             if (args.length > 0) {
-                String commandName = args[0];
-                Optional<SystemCommand> resolved = intentResolver.resolve(commandName);
+                String rawInput = args[0];
+                String normalized = IntentNormalizer.normalize(rawInput);
+                Optional<SystemCommand> resolved = intentResolver.resolve(rawInput);
+                Intent intent = new Intent(rawInput, normalized, resolved);
 
-                if (resolved.isPresent()) {
-                    executor.execute(resolved.get());
+                Optional<Skill> skill = skillRegistry.findSkill(intent);
+                if (skill.isPresent()) {
+                    skill.get().execute(intent);
                 } else {
-                    System.err.println("[ERROR] No confident match for: " + commandName);
+                    System.err.println("[WARN] No skill found for: " + intent);
                 }
                 return;
             }
@@ -74,7 +88,7 @@ public class Main {
             listCommands(commands);
             interactiveSession(
                     intentResolver,
-                    executor,
+                    skillRegistry,
                     commands,
                     scanner,
                     voiceMode ? speechInput : null);
@@ -100,7 +114,7 @@ public class Main {
 
     private static void interactiveSession(
             IntentResolver intentResolver,
-            CommandExecutor executor,
+            SkillRegistry skillRegistry,
             List<SystemCommand> commands,
             Scanner scanner,
             SpeechInput speechInput) {
@@ -147,25 +161,28 @@ public class Main {
                 continue;
             }
 
-            // ---------- COMMAND RESOLUTION ----------
-            SystemCommand target = null;
+            // ---------- COMMAND RESOLUTION → SKILL DISPATCH ----------
+            Optional<SystemCommand> resolved = Optional.empty();
             try {
                 int index = Integer.parseInt(input) - 1;
                 if (index >= 0 && index < commands.size()) {
-                    target = commands.get(index);
+                    resolved = Optional.of(commands.get(index));
                 }
             } catch (NumberFormatException e) {
-                Optional<SystemCommand> resolved = intentResolver.resolve(input);
-                if (resolved.isPresent()) {
-                    target = resolved.get();
-                } else {
+                resolved = intentResolver.resolve(input);
+                if (resolved.isEmpty()) {
                     System.out.println("[INTENT] No confident match for: \"" + input + "\"");
                 }
             }
 
-            if (target != null) {
-                executor.execute(target);
+            String normalized = IntentNormalizer.normalize(input);
+            Intent intent = new Intent(input, normalized, resolved);
+
+            Optional<Skill> skill = skillRegistry.findSkill(intent);
+            if (skill.isPresent()) {
+                skill.get().execute(intent);
             } else {
+                System.out.println("[WARN] No skill found for: " + intent);
                 listCommands(commands);
             }
         }
