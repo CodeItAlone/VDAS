@@ -17,7 +17,7 @@ import java.io.File;
  */
 public class VoskSpeechInput implements SpeechInput {
 
-    private static final String DEFAULT_MODEL_PATH = "C:/vosk-models/vosk-model-small-en-us-0.15";
+    private static final String DEFAULT_MODEL_PATH = "C:/vosk-models/vosk-model-en-us-0.22";
     private static final float SAMPLE_RATE = 16000;
     private static final int SAMPLE_SIZE_BITS = 16;
     private static final int CHANNELS = 1;

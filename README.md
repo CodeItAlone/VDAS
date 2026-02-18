@@ -6,13 +6,13 @@
 
 - Java 17+
 - Maven 3.8+
-- Vosk speech model (English, ~40 MB)
+- Vosk speech model (English, full model ~1.8 GB)
 
 ### Vosk Model Setup
 
 1. Download the model from [Vosk Models](https://alphacephei.com/vosk/models):
-   - Recommended: `vosk-model-small-en-us-0.15`
-2. Extract to a known location (e.g., `C:\vosk-models\vosk-model-small-en-us-0.15`)
+   - Required: `vosk-model-en-us-0.22`
+2. Extract to a known location (e.g., `C:\vosk-models\vosk-model-en-us-0.22`)
 3. Update `DEFAULT_MODEL_PATH` in `VoskSpeechInput.java` if using a different path.
 
 ## Build & Run

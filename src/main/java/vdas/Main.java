@@ -18,7 +18,7 @@ import java.util.Scanner;
  */
 public class Main {
 
-    private static final String VOSK_MODEL_PATH = "C:\\vosk-models\\vosk-model-small-en-us-0.15";
+    private static final String VOSK_MODEL_PATH = "C:\\vosk-models\\vosk-model-en-us-0.22";
 
     public static void main(String[] args) {
         System.out.println("========================================");
