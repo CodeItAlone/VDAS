@@ -1,6 +1,7 @@
 package vdas.skill;
 
 import vdas.executor.CommandExecutor;
+import vdas.intent.Intent;
 
 import java.util.Set;
 
