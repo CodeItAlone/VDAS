@@ -1,19 +1,42 @@
 # VDAS — Voice-Driven Developer Automation System
 
-**Step 2: Offline Voice Input** — Execute system commands using voice or keyboard input.
+**Offline, deterministic voice automation for developers.** Execute system commands using natural voice input or keyboard — no cloud, no AI, no NLP libraries.
+
+---
+
+## Architecture Overview
+
+```
+Raw Input (voice / keyboard)
+  → IntentResolver
+      → Intent { rawInput, normalizedInput, resolvedCommand, confidence }
+          → SkillRegistry
+              → Skill.execute(Intent)
+```
+
+| Layer | Responsibility |
+|-------|---------------|
+| **Speech** | Offline voice capture via Vosk (ASR) |
+| **Intent** | Normalize input → resolve command → compute confidence |
+| **Skill** | Domain-scoped command execution (stateless) |
+| **Executor** | OS-level process execution via `ProcessBuilder` |
+| **Config** | JSON-driven command definitions with aliases |
+
+---
 
 ## Prerequisites
 
 - Java 17+
 - Maven 3.8+
-- Vosk speech model (English, full model ~1.8 GB)
+- Vosk speech model (English, ~1.8 GB)
 
 ### Vosk Model Setup
 
-1. Download the model from [Vosk Models](https://alphacephei.com/vosk/models):
-   - Required: `vosk-model-en-us-0.22`
-2. Extract to a known location (e.g., `C:\vosk-models\vosk-model-en-us-0.22`)
-3. Update `DEFAULT_MODEL_PATH` in `VoskSpeechInput.java` if using a different path.
+1. Download from [Vosk Models](https://alphacephei.com/vosk/models): **`vosk-model-en-us-0.22`**
+2. Extract to `C:\vosk-models\vosk-model-en-us-0.22`
+3. Update `VOSK_MODEL_PATH` in `Main.java` if using a different location.
+
+---
 
 ## Build & Run
 
@@ -22,9 +45,23 @@ mvn clean package -q
 java -jar target/vdas-1.0-SNAPSHOT.jar
 ```
 
+### CLI Mode (single command)
+
+```bash
+java -jar target/vdas-1.0-SNAPSHOT.jar "java version"
+```
+
+### Run Tests
+
+```bash
+mvn test
+```
+
+---
+
 ## Usage
 
-On startup, VDAS asks you to choose an input mode:
+On startup, VDAS prompts for input mode:
 
 ```
 Select input mode:
@@ -33,38 +70,104 @@ Select input mode:
 >
 ```
 
-- **Voice mode**: Speak a command name (e.g., "java version"). VDAS listens for up to 10 seconds, recognizes your speech offline, and executes the matching command.
-- **Keyboard mode**: Type the command name or number, same as Step 1.
-- In voice mode, type `k` to switch to keyboard, or `q` to quit.
+- **Voice mode** — Speak a command (e.g., "java version"). VDAS listens up to 10s, recognizes offline, resolves intent, and executes.
+- **Keyboard mode** — Type the command name or number.
+- Switch modes: `k` (keyboard) / `q` (quit) at any time.
+
+---
 
 ## Configuration
 
-Edit `src/main/resources/commands.json` to add/modify commands:
+Edit `src/main/resources/commands.json` to add or modify commands:
 
 ```json
 {
   "name": "my-command",
   "command": "echo Hello",
-  "workingDirectory": "C:\\some\\path"
+  "workingDirectory": "C:\\some\\path",
+  "aliases": ["run my command", "execute my cmd"]
 }
 ```
+
+Each command supports:
+- **`name`** — canonical identifier (kebab-case)
+- **`command`** — OS command string
+- **`workingDirectory`** — optional execution directory
+- **`aliases`** — optional list of voice/text synonyms for matching
+
+---
+
+## Intent Resolution Pipeline
+
+All user input flows through `IntentResolver`, which produces an immutable `Intent` object:
+
+| Stage | Match Type | Confidence |
+|-------|-----------|------------|
+| 1. Exact match | Normalized input = normalized command name | `1.0` |
+| 2. Alias match | Normalized input = normalized alias | `1.0` |
+| 3. Fuzzy match | Levenshtein similarity ≥ `0.75` threshold | `score` |
+| 4. Rejection | Below threshold or ambiguous (top-2 margin < `0.05`) | `0.0` |
+
+Input normalization: lowercase → strip punctuation → collapse whitespace → strip leading ASR articles (`the`, `a`, `an`).
+
+---
 
 ## Project Structure
 
 ```
-vdas/
- ├── src/main/java/vdas/
- │   ├── Main.java              — Entry point (voice/keyboard mode selection)
- │   ├── speech/
- │   │   ├── SpeechInput.java   — Speech input interface
- │   │   └── VoskSpeechInput.java — Vosk offline implementation
- │   ├── executor/
- │   │   └── CommandExecutor.java — ProcessBuilder wrapper
- │   ├── config/
- │   │   └── CommandLoader.java   — JSON config reader
- │   └── model/
- │       └── SystemCommand.java   — Command POJO
- ├── src/main/resources/
- │   └── commands.json            — Command definitions
- └── pom.xml
+src/main/java/vdas/
+├── Main.java                        — Entry point, input mode selection, main loop
+├── intent/
+│   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence)
+│   ├── IntentResolver.java          — Deterministic resolution engine (exact → alias → fuzzy)
+│   ├── IntentNormalizer.java        — Input normalization (voice + keyboard)
+│   └── LevenshteinDistance.java     — Edit distance & similarity scoring
+├── skill/
+│   ├── Skill.java                   — Skill interface (canHandle + execute)
+│   ├── SkillRegistry.java           — First-match skill dispatcher
+│   ├── SystemInfoSkill.java         — system-info, java-version
+│   └── FileSystemSkill.java         — list-files
+├── executor/
+│   └── CommandExecutor.java         — ProcessBuilder wrapper
+├── config/
+│   └── CommandLoader.java           — JSON config reader (Gson)
+├── model/
+│   └── SystemCommand.java           — Command model with aliases
+└── speech/
+    ├── SpeechInput.java             — Speech input interface
+    └── VoskSpeechInput.java         — Vosk offline ASR implementation
+
+src/main/resources/
+└── commands.json                    — Command definitions
+
+src/test/java/vdas/
+├── intent/
+│   ├── IntentTest.java              — Immutability & structure tests
+│   ├── IntentResolverTest.java      — Resolution pipeline tests
+│   ├── IntentNormalizerTest.java    — Normalization tests
+│   └── LevenshteinDistanceTest.java — Edit distance tests
+├── skill/
+│   ├── SkillRegistryTest.java       — Dispatch & ordering tests
+│   ├── FileSystemSkillTest.java     — canHandle tests
+│   └── SystemInfoSkillTest.java     — canHandle tests
+└── config/
+    └── CommandLoaderTest.java       — JSON loading tests
 ```
+
+---
+
+## Design Principles
+
+- **Offline-first** — No network, no cloud, no external APIs
+- **Deterministic** — Same input always produces same output
+- **No AI/ML/NLP** — Pure algorithmic resolution (Levenshtein + exact matching)
+- **Immutable Intent** — `Intent` is a value object, no mutation after creation
+- **Single responsibility** — Only `IntentResolver` creates `Intent` objects
+- **Stateless skills** — Skills have no memory between executions
+- **Explicit registration** — No reflection, no DI framework
+
+---
+
+## License
+
+Private project.
