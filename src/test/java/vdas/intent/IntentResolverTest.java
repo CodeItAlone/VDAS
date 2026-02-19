@@ -29,92 +29,126 @@ class IntentResolverTest {
 
     @Test
     void testExactMatch_listFiles() {
-        Optional<SystemCommand> result = resolver.resolve("list files");
-        assertTrue(result.isPresent());
-        assertEquals("list-files", result.get().getName());
+        Intent result = resolver.resolve("list files");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("list-files", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
     }
 
     @Test
     void testExactMatch_javaVersion() {
-        Optional<SystemCommand> result = resolver.resolve("java version");
-        assertTrue(result.isPresent());
-        assertEquals("java-version", result.get().getName());
+        Intent result = resolver.resolve("java version");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("java-version", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
     }
 
     @Test
     void testExactMatch_caseInsensitive() {
-        Optional<SystemCommand> result = resolver.resolve("JAVA VERSION");
-        assertTrue(result.isPresent());
-        assertEquals("java-version", result.get().getName());
+        Intent result = resolver.resolve("JAVA VERSION");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("java-version", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
     }
 
     // ── Alias matches ──
 
     @Test
     void testAliasMatch_showFiles() {
-        Optional<SystemCommand> result = resolver.resolve("show files");
-        assertTrue(result.isPresent());
-        assertEquals("list-files", result.get().getName());
+        Intent result = resolver.resolve("show files");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("list-files", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
     }
 
     @Test
     void testAliasMatch_checkJava() {
-        Optional<SystemCommand> result = resolver.resolve("check java");
-        assertTrue(result.isPresent());
-        assertEquals("java-version", result.get().getName());
+        Intent result = resolver.resolve("check java");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("java-version", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
     }
 
     @Test
     void testAliasMatch_sysInfo() {
-        Optional<SystemCommand> result = resolver.resolve("sys info");
-        assertTrue(result.isPresent());
-        assertEquals("system-info", result.get().getName());
+        Intent result = resolver.resolve("sys info");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("system-info", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
     }
 
     // ── Fuzzy matches ──
 
     @Test
     void testFuzzyMatch_javaVirsion() {
-        Optional<SystemCommand> result = resolver.resolve("java virsion");
-        assertTrue(result.isPresent());
-        assertEquals("java-version", result.get().getName());
+        Intent result = resolver.resolve("java virsion");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("java-version", result.getResolvedCommand().get().getName());
+        assertTrue(result.getConfidence() >= 0.75, "Fuzzy confidence should be >= 0.75");
+        assertTrue(result.getConfidence() < 1.0, "Fuzzy confidence should be < 1.0");
     }
 
     // ── Safe rejections ──
 
     @Test
     void testReject_deleteFiles() {
-        Optional<SystemCommand> result = resolver.resolve("delete files");
-        assertTrue(result.isEmpty(), "Unknown command 'delete files' must be rejected");
+        Intent result = resolver.resolve("delete files");
+        assertTrue(result.getResolvedCommand().isEmpty(), "Unknown command 'delete files' must be rejected");
+        assertTrue(result.getConfidence() < 0.75);
     }
 
     @Test
     void testReject_openChrome() {
-        Optional<SystemCommand> result = resolver.resolve("open chrome");
-        assertTrue(result.isEmpty(), "Unknown command 'open chrome' must be rejected");
+        Intent result = resolver.resolve("open chrome");
+        assertTrue(result.getResolvedCommand().isEmpty(), "Unknown command 'open chrome' must be rejected");
     }
 
     @Test
     void testReject_formatDisk() {
-        Optional<SystemCommand> result = resolver.resolve("format disk");
-        assertTrue(result.isEmpty(), "Unknown command 'format disk' must be rejected");
+        Intent result = resolver.resolve("format disk");
+        assertTrue(result.getResolvedCommand().isEmpty(), "Unknown command 'format disk' must be rejected");
     }
 
     @Test
     void testReject_nullInput() {
-        Optional<SystemCommand> result = resolver.resolve(null);
-        assertTrue(result.isEmpty());
+        Intent result = resolver.resolve(null);
+        assertTrue(result.getResolvedCommand().isEmpty());
+        assertEquals(0.0, result.getConfidence());
     }
 
     @Test
     void testReject_emptyInput() {
-        Optional<SystemCommand> result = resolver.resolve("");
-        assertTrue(result.isEmpty());
+        Intent result = resolver.resolve("");
+        assertTrue(result.getResolvedCommand().isEmpty());
+        assertEquals(0.0, result.getConfidence());
     }
 
     @Test
     void testReject_blankInput() {
-        Optional<SystemCommand> result = resolver.resolve("   ");
-        assertTrue(result.isEmpty());
+        Intent result = resolver.resolve("   ");
+        assertTrue(result.getResolvedCommand().isEmpty());
+        assertEquals(0.0, result.getConfidence());
+    }
+
+    // ── resolveByCommand ──
+
+    @Test
+    void testResolveByCommand_returnsFullConfidence() {
+        SystemCommand cmd = new SystemCommand("list-files", "dir /b", null);
+        Intent result = resolver.resolveByCommand("1", cmd);
+
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("list-files", result.getResolvedCommand().get().getName());
+        assertEquals(1.0, result.getConfidence());
+        assertEquals("1", result.getRawInput());
+    }
+
+    // ── Intent structure ──
+
+    @Test
+    void testResolve_preservesRawInput() {
+        Intent result = resolver.resolve("LIST FILES");
+        assertEquals("LIST FILES", result.getRawInput());
+        assertEquals("list files", result.getNormalizedInput());
     }
 }
