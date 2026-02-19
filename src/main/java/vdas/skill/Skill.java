@@ -1,5 +1,7 @@
 package vdas.skill;
 
+import vdas.intent.Intent;
+
 /**
  * Skill interface for the VDAS skill-based architecture.
  *
