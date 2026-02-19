@@ -2,11 +2,10 @@ package vdas;
 
 import vdas.config.CommandLoader;
 import vdas.executor.CommandExecutor;
-import vdas.intent.IntentNormalizer;
+import vdas.intent.Intent;
 import vdas.intent.IntentResolver;
 import vdas.model.SystemCommand;
 import vdas.skill.FileSystemSkill;
-import vdas.skill.Intent;
 import vdas.skill.Skill;
 import vdas.skill.SkillRegistry;
 import vdas.skill.SystemInfoSkill;
@@ -50,9 +49,7 @@ public class Main {
             // ---------- CLI ARG MODE ----------
             if (args.length > 0) {
                 String rawInput = args[0];
-                String normalized = IntentNormalizer.normalize(rawInput);
-                Optional<SystemCommand> resolved = intentResolver.resolve(rawInput);
-                Intent intent = new Intent(rawInput, normalized, resolved);
+                Intent intent = intentResolver.resolve(rawInput);
 
                 Optional<Skill> skill = skillRegistry.findSkill(intent);
                 if (skill.isPresent()) {
@@ -162,21 +159,22 @@ public class Main {
             }
 
             // ---------- COMMAND RESOLUTION → SKILL DISPATCH ----------
-            Optional<SystemCommand> resolved = Optional.empty();
+            Intent intent;
             try {
                 int index = Integer.parseInt(input) - 1;
                 if (index >= 0 && index < commands.size()) {
-                    resolved = Optional.of(commands.get(index));
+                    intent = intentResolver.resolveByCommand(input, commands.get(index));
+                } else {
+                    System.out.println("[WARN] Invalid index: " + input);
+                    listCommands(commands);
+                    continue;
                 }
             } catch (NumberFormatException e) {
-                resolved = intentResolver.resolve(input);
-                if (resolved.isEmpty()) {
+                intent = intentResolver.resolve(input);
+                if (intent.getResolvedCommand().isEmpty()) {
                     System.out.println("[INTENT] No confident match for: \"" + input + "\"");
                 }
             }
-
-            String normalized = IntentNormalizer.normalize(input);
-            Intent intent = new Intent(input, normalized, resolved);
 
             Optional<Skill> skill = skillRegistry.findSkill(intent);
             if (skill.isPresent()) {
