@@ -1,6 +1,7 @@
 package vdas.skill;
 
 import org.junit.jupiter.api.Test;
+import vdas.intent.Intent;
 import vdas.model.SystemCommand;
 import java.util.Optional;
 
@@ -30,12 +31,12 @@ class SystemInfoSkillTest {
 
     @Test
     void cannotHandle_noResolvedCommand() {
-        Intent intent = new Intent("something", "something", Optional.empty());
+        Intent intent = Intent.forTesting("something", "something", Optional.empty(), 0.0);
         assertFalse(skill.canHandle(intent));
     }
 
     private Intent intentFor(String commandName) {
         SystemCommand cmd = new SystemCommand(commandName, "dummy", null);
-        return new Intent(commandName, commandName, Optional.of(cmd));
+        return Intent.forTesting(commandName, commandName, Optional.of(cmd), 1.0);
     }
 }
