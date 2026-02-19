@@ -8,7 +8,7 @@ import java.util.Optional;
 /**
  * Deterministic intent resolution engine.
  *
- * Resolves raw user input (voice or keyboard) to a SystemCommand
+ * Resolves raw user input (voice or keyboard) to an {@link Intent}
  * using a strict pipeline: exact match → alias match → fuzzy match.
  *
  * No AI, ML, or NLP libraries. Fully offline and auditable.
@@ -37,25 +37,29 @@ public class IntentResolver {
     }
 
     /**
-     * Resolves raw user input to a SystemCommand.
+     * Resolves raw user input to a fully constructed Intent.
      *
      * Pipeline (short-circuits on first match):
      * 1. Normalize input
-     * 2. Exact match against normalized command names
-     * 3. Alias match against normalized aliases
-     * 4. Fuzzy match (Levenshtein) with confidence ≥ threshold
+     * 2. Exact match against normalized command names → confidence 1.0
+     * 3. Alias match against normalized aliases → confidence 1.0
+     * 4. Fuzzy match (Levenshtein) with score ≥ threshold → confidence = score
+     *
+     * If no match is found, returns an Intent with empty resolvedCommand
+     * and confidence 0.0.
      *
      * @param rawInput the raw user input (voice transcription or keyboard)
-     * @return the resolved command, or empty if no confident match
+     * @return a fully constructed Intent (never null)
      */
-    public Optional<SystemCommand> resolve(String rawInput) {
+    public Intent resolve(String rawInput) {
         if (rawInput == null || rawInput.isBlank()) {
-            return Optional.empty();
+            String safe = (rawInput == null) ? "" : rawInput;
+            return new Intent(safe, "", Optional.empty(), 0.0);
         }
 
         String normalized = IntentNormalizer.normalize(rawInput);
         if (normalized.isEmpty()) {
-            return Optional.empty();
+            return new Intent(rawInput, normalized, Optional.empty(), 0.0);
         }
 
         // ── Step 1: Exact match ──
@@ -63,7 +67,7 @@ public class IntentResolver {
             String normalizedName = IntentNormalizer.normalizeCommandName(cmd.getName());
             if (normalizedName.equals(normalized)) {
                 System.out.println("[INTENT] Exact match: \"" + rawInput + "\" → " + cmd.getName());
-                return Optional.of(cmd);
+                return new Intent(rawInput, normalized, Optional.of(cmd), 1.0);
             }
         }
 
@@ -73,7 +77,7 @@ public class IntentResolver {
                 if (IntentNormalizer.normalize(alias).equals(normalized)) {
                     System.out.println("[INTENT] Alias match: \"" + rawInput + "\" → " + cmd.getName()
                             + " (alias: \"" + alias + "\")");
-                    return Optional.of(cmd);
+                    return new Intent(rawInput, normalized, Optional.of(cmd), 1.0);
                 }
             }
         }
@@ -83,12 +87,26 @@ public class IntentResolver {
     }
 
     /**
+     * Wraps an already-known command into a proper Intent with confidence 1.0.
+     * Used when the command is selected by index (numeric input) and does not
+     * need the resolution pipeline.
+     *
+     * @param rawInput the raw user input (e.g. "2")
+     * @param cmd      the command selected by index
+     * @return a fully constructed Intent with confidence 1.0
+     */
+    public Intent resolveByCommand(String rawInput, SystemCommand cmd) {
+        String normalized = IntentNormalizer.normalize(rawInput);
+        return new Intent(rawInput, normalized, Optional.of(cmd), 1.0);
+    }
+
+    /**
      * Finds the best fuzzy match across all command names and aliases.
      * Rejects if:
      * - Best score is below the threshold
      * - Top two candidates are within AMBIGUITY_MARGIN (ambiguous)
      */
-    private Optional<SystemCommand> fuzzyMatch(String normalized, String rawInput) {
+    private Intent fuzzyMatch(String normalized, String rawInput) {
         SystemCommand bestCommand = null;
         double bestScore = 0.0;
         String bestTarget = "";
@@ -127,7 +145,7 @@ public class IntentResolver {
             System.out.println("[INTENT] Rejected: \"" + rawInput
                     + "\" (best score: " + String.format("%.2f", bestScore)
                     + " < threshold: " + String.format("%.2f", threshold) + ")");
-            return Optional.empty();
+            return new Intent(rawInput, normalized, Optional.empty(), bestScore);
         }
 
         // ── Ambiguity gate ──
@@ -137,13 +155,13 @@ public class IntentResolver {
             System.out.println("[INTENT] Ambiguous: \"" + rawInput
                     + "\" (top: " + bestCommand.getName() + " @ " + String.format("%.2f", bestScore)
                     + ", runner-up: " + secondCommand.getName() + " @ " + String.format("%.2f", secondScore) + ")");
-            return Optional.empty();
+            return new Intent(rawInput, normalized, Optional.empty(), bestScore);
         }
 
         System.out.println("[INTENT] Fuzzy match: \"" + rawInput + "\" → " + bestCommand.getName()
                 + " (score: " + String.format("%.2f", bestScore)
                 + ", matched: \"" + bestTarget + "\")");
-        return Optional.of(bestCommand);
+        return new Intent(rawInput, normalized, Optional.of(bestCommand), bestScore);
     }
 
     /**
