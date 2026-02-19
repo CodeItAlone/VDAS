@@ -1,5 +1,7 @@
 package vdas.skill;
 
+import vdas.intent.Intent;
+
 import java.util.List;
 import java.util.Optional;
 
