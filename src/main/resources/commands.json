@@ -32,5 +32,15 @@
       "java info",
       "the java version"
     ]
+  },
+  {
+    "name": "open-app",
+    "command": "",
+    "aliases": [
+      "open app",
+      "launch app",
+      "start app",
+      "run app"
+    ]
   }
 ]
