@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import vdas.model.SystemCommand;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,7 +22,9 @@ class IntentResolverTest {
                 new SystemCommand("java-version", "java -version", null,
                         List.of("check java", "java ver", "jdk version", "java info")),
                 new SystemCommand("system-info", "systeminfo", null,
-                        List.of("sys info", "os info", "computer info")));
+                        List.of("sys info", "os info", "computer info")),
+                new SystemCommand("open-app", "", null,
+                        List.of("open app", "launch app", "start app", "run app")));
         resolver = new IntentResolver(commands);
     }
 
@@ -98,9 +101,11 @@ class IntentResolverTest {
     }
 
     @Test
-    void testReject_openChrome() {
+    void testResolve_openChrome_resolvesToOpenApp() {
         Intent result = resolver.resolve("open chrome");
-        assertTrue(result.getResolvedCommand().isEmpty(), "Unknown command 'open chrome' must be rejected");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("open-app", result.getResolvedCommand().get().getName());
+        assertEquals("chrome", result.getParameters().get("app"));
     }
 
     @Test
@@ -150,5 +155,46 @@ class IntentResolverTest {
         Intent result = resolver.resolve("LIST FILES");
         assertEquals("LIST FILES", result.getRawInput());
         assertEquals("list files", result.getNormalizedInput());
+    }
+
+    // ── Parameter extraction (open-app) ──
+
+    @Test
+    void testResolve_launchVscode_extractsAppParam() {
+        Intent result = resolver.resolve("launch vscode");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertEquals("open-app", result.getResolvedCommand().get().getName());
+        assertEquals("vscode", result.getParameters().get("app"));
+    }
+
+    @Test
+    void testResolve_openAlone_noConfidentMatch() {
+        Intent result = resolver.resolve("open");
+        // "open" alone should not confidently match "open-app" (normalized: "open app")
+        // It may fuzzy-match below threshold or be rejected
+        if (result.getResolvedCommand().isPresent()) {
+            // If it does match, it should NOT be "open-app" with high confidence
+            assertNotEquals(1.0, result.getConfidence(),
+                    "Bare 'open' must not be an exact/alias match to open-app");
+        }
+    }
+
+    @Test
+    void testResolve_openUnknownapp_resolvesButNoWhitelistMatch() {
+        Intent result = resolver.resolve("open unknownapp");
+        // May fuzzy-match to open-app, parameters should have app=unknownapp
+        // The skill will reject it, not the resolver
+        if (result.getResolvedCommand().isPresent()
+                && "open-app".equals(result.getResolvedCommand().get().getName())) {
+            assertEquals("unknownapp", result.getParameters().get("app"));
+        }
+    }
+
+    @Test
+    void testResolve_existingCommandsHaveEmptyParameters() {
+        Intent result = resolver.resolve("list files");
+        assertTrue(result.getResolvedCommand().isPresent());
+        assertTrue(result.getParameters().isEmpty(),
+                "Non-open-app commands should have empty parameters");
     }
 }
