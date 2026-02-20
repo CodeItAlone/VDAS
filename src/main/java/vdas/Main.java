@@ -5,6 +5,7 @@ import vdas.executor.CommandExecutor;
 import vdas.intent.Intent;
 import vdas.intent.IntentResolver;
 import vdas.model.SystemCommand;
+import vdas.skill.AppLauncherSkill;
 import vdas.skill.FileSystemSkill;
 import vdas.skill.Skill;
 import vdas.skill.SkillRegistry;
@@ -36,6 +37,7 @@ public class Main {
 
         // ── Skill registration (explicit, no reflection) ──
         SkillRegistry skillRegistry = new SkillRegistry(List.of(
+                new AppLauncherSkill(),
                 new SystemInfoSkill(executor),
                 new FileSystemSkill(executor)));
 
