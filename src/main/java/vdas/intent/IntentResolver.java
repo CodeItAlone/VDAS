@@ -258,13 +258,19 @@ public class IntentResolver {
         }
 
         // ── Ambiguity gate ──
+        // Instead of rejecting, pass both candidates through for downstream
+        // clarification.
+        // Candidates are sorted by descending score (Refinement 3).
         if (secondCommand != null
                 && secondCommand != bestCommand
                 && (bestScore - secondScore) < AMBIGUITY_MARGIN) {
             System.out.println("[INTENT] Ambiguous: \"" + rawInput
                     + "\" (top: " + bestCommand.getName() + " @ " + String.format("%.2f", bestScore)
                     + ", runner-up: " + secondCommand.getName() + " @ " + String.format("%.2f", secondScore) + ")");
-            return new Intent(rawInput, normalized, Optional.empty(), bestScore);
+            List<SystemCommand> candidates = List.of(bestCommand, secondCommand);
+            List<Double> scores = List.of(bestScore, secondScore);
+            return new Intent(rawInput, normalized, Optional.of(bestCommand), bestScore,
+                    Map.of(), candidates, scores);
         }
 
         System.out.println("[INTENT] Fuzzy match: \"" + rawInput + "\" → " + bestCommand.getName()
