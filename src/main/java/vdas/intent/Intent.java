@@ -3,6 +3,7 @@ package vdas.intent;
 import vdas.model.SystemCommand;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -10,8 +11,9 @@ import java.util.Optional;
  * First-class intent representation.
  *
  * Carries raw + normalized input, an optional resolved command,
- * the confidence score of the resolution, and optional parameters
- * extracted during resolution (e.g. {@code {"app": "chrome"}}).
+ * the confidence score of the resolution, optional parameters
+ * extracted during resolution, and optional candidate commands
+ * for ambiguity clarification.
  *
  * Immutable — all fields are final, no setters.
  * Only {@link IntentResolver} may construct instances (package-private
@@ -25,13 +27,16 @@ public final class Intent {
     private final double confidence;
     private final ConfidenceBand confidenceBand;
     private final Map<String, String> parameters;
+    private final List<SystemCommand> candidateCommands;
+    private final List<Double> candidateScores;
 
     /**
      * Package-private constructor — only IntentResolver may create Intents.
      */
     Intent(String rawInput, String normalizedInput,
             Optional<SystemCommand> resolvedCommand, double confidence) {
-        this(rawInput, normalizedInput, resolvedCommand, confidence, Collections.emptyMap());
+        this(rawInput, normalizedInput, resolvedCommand, confidence,
+                Collections.emptyMap(), Collections.emptyList(), Collections.emptyList());
     }
 
     /**
@@ -41,12 +46,26 @@ public final class Intent {
     Intent(String rawInput, String normalizedInput,
             Optional<SystemCommand> resolvedCommand, double confidence,
             Map<String, String> parameters) {
+        this(rawInput, normalizedInput, resolvedCommand, confidence,
+                parameters, Collections.emptyList(), Collections.emptyList());
+    }
+
+    /**
+     * Package-private full constructor with parameters and candidates.
+     */
+    Intent(String rawInput, String normalizedInput,
+            Optional<SystemCommand> resolvedCommand, double confidence,
+            Map<String, String> parameters,
+            List<SystemCommand> candidateCommands,
+            List<Double> candidateScores) {
         this.rawInput = rawInput;
         this.normalizedInput = normalizedInput;
         this.resolvedCommand = resolvedCommand;
         this.confidence = confidence;
         this.confidenceBand = ConfidenceBand.of(confidence);
         this.parameters = Collections.unmodifiableMap(parameters);
+        this.candidateCommands = List.copyOf(candidateCommands);
+        this.candidateScores = List.copyOf(candidateScores);
     }
 
     public String getRawInput() {
@@ -83,6 +102,42 @@ public final class Intent {
         return parameters;
     }
 
+    /**
+     * Returns the list of candidate commands, sorted by descending confidence
+     * score.
+     * Non-empty only when the intent is ambiguous (multiple close-scoring fuzzy
+     * matches).
+     *
+     * @return unmodifiable candidate list (never null, may be empty)
+     */
+    public List<SystemCommand> getCandidateCommands() {
+        return candidateCommands;
+    }
+
+    /**
+     * Returns the confidence scores parallel to {@link #getCandidateCommands()}.
+     * Same ordering — index 0 is the score for candidate 0, etc.
+     *
+     * @return unmodifiable score list (never null, may be empty)
+     */
+    public List<Double> getCandidateScores() {
+        return candidateScores;
+    }
+
+    /**
+     * Returns a new Intent with the given resolved command at confidence 1.0 (HIGH
+     * band).
+     * Used after clarification to create a clarified intent that can be re-gated.
+     * Preserves raw and normalized input from the original intent.
+     *
+     * @param command the clarified command
+     * @return a new immutable Intent with the clarified command
+     */
+    public Intent withResolvedCommand(SystemCommand command) {
+        return new Intent(rawInput, normalizedInput,
+                Optional.of(command), 1.0, parameters);
+    }
+
     @Override
     public String toString() {
         String base = "Intent{rawInput='" + rawInput + "'"
@@ -92,6 +147,9 @@ public final class Intent {
                 + ", band=" + confidenceBand;
         if (!parameters.isEmpty()) {
             base += ", parameters=" + parameters;
+        }
+        if (!candidateCommands.isEmpty()) {
+            base += ", candidates=" + candidateCommands.size();
         }
         return base + "}";
     }
@@ -116,5 +174,17 @@ public final class Intent {
             Optional<SystemCommand> resolvedCommand, double confidence,
             Map<String, String> parameters) {
         return new Intent(rawInput, normalizedInput, resolvedCommand, confidence, parameters);
+    }
+
+    /**
+     * Test-only factory with candidates.
+     * <p>
+     * DO NOT use in production code — use {@link IntentResolver} instead.
+     */
+    public static Intent forTesting(String rawInput, String normalizedInput,
+            Optional<SystemCommand> resolvedCommand, double confidence,
+            List<SystemCommand> candidateCommands, List<Double> candidateScores) {
+        return new Intent(rawInput, normalizedInput, resolvedCommand, confidence,
+                Collections.emptyMap(), candidateCommands, candidateScores);
     }
 }
