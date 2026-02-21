@@ -2,9 +2,11 @@ package vdas;
 
 import vdas.config.CommandLoader;
 import vdas.executor.CommandExecutor;
+import vdas.intent.DefaultAmbiguityDetector;
 import vdas.intent.Intent;
 import vdas.intent.IntentResolver;
 import vdas.model.SystemCommand;
+import vdas.safety.ClarificationPrompt;
 import vdas.safety.ConfirmationManager;
 import vdas.safety.DefaultDangerClassifier;
 import vdas.safety.ExecutionGate;
@@ -54,7 +56,7 @@ public class Main {
                 String rawInput = args[0];
                 Intent intent = intentResolver.resolve(rawInput);
 
-                ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier());
+                ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier(), new DefaultAmbiguityDetector());
                 ExecutionGate.Decision decision = gate.evaluate(intent);
 
                 if (decision == ExecutionGate.Decision.REJECT) {
@@ -62,9 +64,9 @@ public class Main {
                     return;
                 }
 
-                // CLI mode: no confirmation possible, execute only if EXECUTE
-                if (decision == ExecutionGate.Decision.CONFIRM) {
-                    System.out.println("[REJECTED] Command requires confirmation (not available in CLI mode): \""
+                // CLI mode: no confirmation or clarification possible
+                if (decision == ExecutionGate.Decision.CONFIRM || decision == ExecutionGate.Decision.CLARIFY) {
+                    System.out.println("[REJECTED] Command requires interaction (not available in CLI mode): \""
                             + rawInput + "\"");
                     return;
                 }
@@ -139,8 +141,9 @@ public class Main {
             SpeechInput speechInput) {
 
         boolean voiceMode = (speechInput != null);
-        ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier());
+        ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier(), new DefaultAmbiguityDetector());
         ConfirmationManager confirmationMgr = new ConfirmationManager();
+        ClarificationPrompt clarificationPrompt = new ClarificationPrompt();
 
         while (true) {
             String input;
@@ -206,6 +209,38 @@ public class Main {
             if (decision == ExecutionGate.Decision.REJECT) {
                 System.out.println("[REJECTED] Low confidence: \"" + input + "\"");
                 listCommands(commands);
+                continue;
+            }
+
+            if (decision == ExecutionGate.Decision.CLARIFY) {
+                Optional<SystemCommand> clarified = clarificationPrompt.ask(intent, scanner);
+                if (clarified.isPresent()) {
+                    // Refinement 2: Re-gate the clarified intent
+                    Intent clarifiedIntent = intent.withResolvedCommand(clarified.get());
+                    ExecutionGate.Decision clarifiedDecision = gate.evaluate(clarifiedIntent);
+
+                    if (clarifiedDecision == ExecutionGate.Decision.REJECT) {
+                        System.out.println("[REJECTED] Clarified command rejected.");
+                        continue;
+                    }
+
+                    if (clarifiedDecision == ExecutionGate.Decision.CONFIRM) {
+                        if (!confirmationMgr.confirm(clarifiedIntent, scanner)) {
+                            System.out.println("[CANCELLED] Command cancelled by user.");
+                            continue;
+                        }
+                    }
+
+                    // Dispatch clarified intent
+                    Optional<Skill> clarifiedSkill = skillRegistry.findSkill(clarifiedIntent);
+                    if (clarifiedSkill.isPresent()) {
+                        clarifiedSkill.get().execute(clarifiedIntent);
+                    } else {
+                        System.out.println("[WARN] No skill found for: " + clarifiedIntent);
+                    }
+                } else {
+                    System.out.println("[REJECTED] Ambiguous intent.");
+                }
                 continue;
             }
 
