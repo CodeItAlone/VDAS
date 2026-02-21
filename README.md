@@ -9,15 +9,17 @@
 ```
 Raw Input (voice / keyboard)
   → IntentResolver
-      → Intent { rawInput, normalizedInput, resolvedCommand, confidence }
-          → SkillRegistry
-              → Skill.execute(Intent)
+      → Intent { rawInput, normalizedInput, resolvedCommand, confidence, confidenceBand }
+          → ExecutionGate (checks Danger / prompts Confirmation)
+              → SkillRegistry
+                  → Skill.execute(Intent)
 ```
 
 | Layer | Responsibility |
 |-------|---------------|
 | **Speech** | Offline voice capture via Vosk (ASR) |
-| **Intent** | Normalize input → resolve command → compute confidence |
+| **Intent** | Normalize input → resolve command → compute confidence & band |
+| **Safety** | Execution gate, danger classification, user confirmation |
 | **Skill** | Domain-scoped command execution (stateless) |
 | **Executor** | OS-level process execution via `ProcessBuilder` |
 | **Config** | JSON-driven command definitions with aliases |
@@ -112,16 +114,40 @@ Input normalization: lowercase → strip punctuation → collapse whitespace →
 
 ---
 
+## Safety & Confirmation Gate
+
+After intent resolution, an **ExecutionGate** evaluates the intent based on its `ConfidenceBand` and danger level:
+
+| ConfidenceBand | Dangerous | Decision |
+|----------------|-----------|----------|
+| HIGH           | NO        | EXECUTE  |
+| HIGH           | YES       | CONFIRM  |
+| MEDIUM         | *         | CONFIRM  |
+| LOW            | *         | REJECT   |
+| (unresolved)   | —         | REJECT   |
+
+* **Dangerous Commands**: Hardcoded set (`quit`, `shutdown`, `restart`, `delete`, `remove`, `format`).
+* **Confirmation**: If required, prompts `Are you sure you want to <action>? (yes / no)`.
+* Unresolved intents are rejected immediately. Keyboard shortcut (`q` / `quit`) bypasses this gate for convenience.
+
+---
+
 ## Project Structure
 
 ```
 src/main/java/vdas/
 ├── Main.java                        — Entry point, input mode selection, main loop
 ├── intent/
-│   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence)
+│   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence, band)
 │   ├── IntentResolver.java          — Deterministic resolution engine (exact → alias → fuzzy)
 │   ├── IntentNormalizer.java        — Input normalization (voice + keyboard)
+│   ├── ConfidenceBand.java          — HIGH/MEDIUM/LOW confidence bands
 │   └── LevenshteinDistance.java     — Edit distance & similarity scoring
+├── safety/
+│   ├── ExecutionGate.java           — Evaluates confidence vs danger (EXECUTE/CONFIRM/REJECT)
+│   ├── DangerClassifier.java        — Danger classification interface
+│   ├── DefaultDangerClassifier.java — Hardcoded list of dangerous commands
+│   └── ConfirmationManager.java     — Yes/no user confirmation prompt
 ├── skill/
 │   ├── Skill.java                   — Skill interface (canHandle + execute)
 │   ├── SkillRegistry.java           — First-match skill dispatcher
@@ -146,6 +172,10 @@ src/test/java/vdas/
 │   ├── IntentResolverTest.java      — Resolution pipeline tests
 │   ├── IntentNormalizerTest.java    — Normalization tests
 │   └── LevenshteinDistanceTest.java — Edit distance tests
+├── safety/
+│   ├── ExecutionGateTest.java       — PRD validation matrix tests
+│   ├── DangerClassifierTest.java    — Classification rules tests
+│   └── ConfirmationManagerTest.java — Input acceptance tests
 ├── skill/
 │   ├── SkillRegistryTest.java       — Dispatch & ordering tests
 │   ├── FileSystemSkillTest.java     — canHandle tests
