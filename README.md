@@ -8,18 +8,19 @@
 
 ```
 Raw Input (voice / keyboard)
-  → IntentResolver
-      → Intent { rawInput, normalizedInput, resolvedCommand, confidence, confidenceBand }
-          → ExecutionGate (checks Danger / prompts Confirmation)
-              → SkillRegistry
-                  → Skill.execute(Intent)
+  → IntentNormalizer (lowercase, strip punctuation, remove articles)
+      → IntentResolver (exact → alias → verb-prefix → fuzzy)
+          → Intent { rawInput, normalizedInput, resolvedCommand, confidence, band, candidates }
+              → ExecutionGate (checks Danger / Ambiguity / prompts Confirmation or Clarification)
+                  → SkillRegistry
+                      → Skill.execute(Intent)
 ```
 
 | Layer | Responsibility |
 |-------|---------------|
-| **Speech** | Offline voice capture via Vosk (ASR) |
-| **Intent** | Normalize input → resolve command → compute confidence & band |
-| **Safety** | Execution gate, danger classification, user confirmation |
+| **Speech** | Offline voice capture via Whisper STT (Python microservice) |
+| **Intent** | Normalize input → resolve command → compute confidence & band → detect ambiguity |
+| **Safety** | Execution gate, danger classification, confirmation, clarification |
 | **Skill** | Domain-scoped command execution (stateless) |
 | **Executor** | OS-level process execution via `ProcessBuilder` |
 | **Config** | JSON-driven command definitions with aliases |
@@ -30,13 +31,19 @@ Raw Input (voice / keyboard)
 
 - Java 17+
 - Maven 3.8+
-- Vosk speech model (English, ~1.8 GB)
+- Python 3.10+ (for Whisper STT microservice)
 
-### Vosk Model Setup
+### Whisper STT Setup
 
-1. Download from [Vosk Models](https://alphacephei.com/vosk/models): **`vosk-model-en-us-0.22`**
-2. Extract to `C:\vosk-models\vosk-model-en-us-0.22`
-3. Update `VOSK_MODEL_PATH` in `Main.java` if using a different location.
+VDAS uses a local Python microservice for offline speech-to-text:
+
+```bash
+cd whisper-stt
+pip install -r requirements.txt
+python server.py
+```
+
+The Whisper STT server runs at `http://localhost:8000`. VDAS auto-detects it on startup.
 
 ---
 
@@ -53,6 +60,8 @@ java -jar target/vdas-1.0-SNAPSHOT.jar
 java -jar target/vdas-1.0-SNAPSHOT.jar "java version"
 ```
 
+> **Note:** CLI mode only executes HIGH-confidence, non-dangerous commands. Commands requiring confirmation or clarification are rejected in CLI mode.
+
 ### Run Tests
 
 ```bash
@@ -67,12 +76,12 @@ On startup, VDAS prompts for input mode:
 
 ```
 Select input mode:
-  [V] Voice (offline, microphone)
+  [W] Whisper voice (offline, microphone)
   [K] Keyboard (default)
 >
 ```
 
-- **Voice mode** — Speak a command (e.g., "java version"). VDAS listens up to 10s, recognizes offline, resolves intent, and executes.
+- **Voice mode** — Speak a command (e.g., "java version"). VDAS captures audio via Whisper STT, resolves intent, and executes.
 - **Keyboard mode** — Type the command name or number.
 - Switch modes: `k` (keyboard) / `q` (quit) at any time.
 
@@ -93,7 +102,7 @@ Edit `src/main/resources/commands.json` to add or modify commands:
 
 Each command supports:
 - **`name`** — canonical identifier (kebab-case)
-- **`command`** — OS command string
+- **`command`** — OS command string (empty for skill-handled commands like `open-app`)
 - **`workingDirectory`** — optional execution directory
 - **`aliases`** — optional list of voice/text synonyms for matching
 
@@ -105,18 +114,32 @@ All user input flows through `IntentResolver`, which produces an immutable `Inte
 
 | Stage | Match Type | Confidence |
 |-------|-----------|------------|
-| 1. Exact match | Normalized input = normalized command name | `1.0` |
-| 2. Alias match | Normalized input = normalized alias | `1.0` |
-| 3. Fuzzy match | Levenshtein similarity ≥ `0.75` threshold | `score` |
-| 4. Rejection | Below threshold or ambiguous (top-2 margin < `0.05`) | `0.0` |
+| 1. Exact match | Normalized input = normalized command name | `1.0` (HIGH) |
+| 2. Alias match | Normalized input = normalized alias | `1.0` (HIGH) |
+| 3. Verb-prefix match | `open/launch/start/run <app>` → `open-app` | `1.0` (HIGH) |
+| 4. Fuzzy match | Levenshtein similarity ≥ `0.75` threshold | `score` (MEDIUM) |
+| 5. Ambiguous | Top-2 candidates within `0.05` margin | `score` (MEDIUM) + candidates |
+| 6. Rejection | Below threshold | `0.0` (LOW) |
 
-Input normalization: lowercase → strip punctuation → collapse whitespace → strip leading ASR articles (`the`, `a`, `an`).
+### Input Normalization
+
+Lowercase → strip punctuation → collapse whitespace → strip leading ASR articles (`the`, `a`, `an`).
+
+### Confidence Bands
+
+| Band | Condition | Source |
+|------|-----------|--------|
+| **HIGH** | `confidence == 1.0` | Exact, alias, or verb-prefix match |
+| **MEDIUM** | `0.75 ≤ confidence < 1.0` | Fuzzy match above threshold |
+| **LOW** | `confidence < 0.75` | Below threshold |
+
+`ConfidenceBand` is assigned once during `Intent` construction — never recomputed downstream.
 
 ---
 
-## Safety & Confirmation Gate
+## Safety & Execution Gate
 
-After intent resolution, an **ExecutionGate** evaluates the intent based on its `ConfidenceBand`, danger level, and ambiguity:
+After intent resolution, an **ExecutionGate** evaluates the intent based on its confidence band, danger classification, and ambiguity:
 
 | ConfidenceBand | Dangerous | Ambiguous | Decision |
 |----------------|-----------|-----------|----------|
@@ -127,12 +150,48 @@ After intent resolution, an **ExecutionGate** evaluates the intent based on its 
 | LOW            | *         | *         | REJECT   |
 | (unresolved)   | —         | —         | REJECT   |
 
-* **Dangerous Commands**: Hardcoded set (`quit`, `shutdown`, `restart`, `delete`, `remove`, `format`).
-* **Ambiguity**: Detected when MEDIUM band + 2+ candidates + top-two score gap ≤ 0.10.
-* **Confirmation**: Prompts `Are you sure you want to <action>? (yes / no)`.
-* **Clarification**: Prints numbered candidate list, accepts index or exact name. One shot only.
-* Clarified intents are re-gated through ExecutionGate (dangerous clarified commands still require confirmation).
-* Keyboard shortcut (`q` / `quit`) bypasses this gate for convenience.
+### Dangerous Commands
+
+Hardcoded set: `quit`, `shutdown`, `restart`, `delete`, `remove`, `format`.
+
+When confirmation is required, VDAS prompts:
+```
+Are you sure you want to <action>? (yes / no)
+```
+Accepted: `yes`, `yeah`, `confirm`. Everything else → rejection.
+
+### Ambiguity Detection
+
+An intent is ambiguous when:
+- Confidence band is **MEDIUM**
+- At least **2 candidate commands** exist
+- Top-two score gap **≤ 0.10**
+
+When clarification is required, VDAS prompts:
+```
+Did you mean:
+1. system-info
+2. java-version
+```
+Accepts a number (e.g., `1`) or exact command name. One shot only — no retries, no memory.
+
+**Re-gating:** Clarified intents are passed back through `ExecutionGate`, so dangerous clarified commands still require confirmation.
+
+### Keyboard Shortcut
+
+Typing `q` or `quit` in the interactive loop exits immediately — this bypasses the safety gate by design. Voice/intent-based "quit" always passes through `ExecutionGate`.
+
+---
+
+## Skills
+
+| Skill | Handles | Description |
+|-------|---------|-------------|
+| **AppLauncherSkill** | `open-app` | Launches whitelisted desktop apps (chrome, vscode, explorer, notepad, calculator) |
+| **SystemInfoSkill** | `system-info`, `java-version` | Runs system commands via `CommandExecutor` |
+| **FileSystemSkill** | `list-files` | Runs file system commands via `CommandExecutor` |
+
+Skills are stateless, registered explicitly (no reflection), and matched via `SkillRegistry` (first-match).
 
 ---
 
@@ -143,11 +202,11 @@ src/main/java/vdas/
 ├── Main.java                        — Entry point, input mode selection, main loop
 ├── intent/
 │   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence, band, candidates)
-│   ├── IntentResolver.java          — Deterministic resolution engine (exact → alias → fuzzy)
+│   ├── IntentResolver.java          — Deterministic resolution engine (exact → alias → verb-prefix → fuzzy)
 │   ├── IntentNormalizer.java        — Input normalization (voice + keyboard)
 │   ├── ConfidenceBand.java          — HIGH/MEDIUM/LOW confidence bands
 │   ├── AmbiguityDetector.java       — Ambiguity detection interface
-│   ├── DefaultAmbiguityDetector.java — Score-based ambiguity detection
+│   ├── DefaultAmbiguityDetector.java — Score-based ambiguity detection (gap ≤ 0.10)
 │   └── LevenshteinDistance.java     — Edit distance & similarity scoring
 ├── safety/
 │   ├── ExecutionGate.java           — Evaluates confidence×danger×ambiguity (EXECUTE/CONFIRM/CLARIFY/REJECT)
@@ -158,6 +217,7 @@ src/main/java/vdas/
 ├── skill/
 │   ├── Skill.java                   — Skill interface (canHandle + execute)
 │   ├── SkillRegistry.java           — First-match skill dispatcher
+│   ├── AppLauncherSkill.java        — Whitelisted app launcher (chrome, vscode, etc.)
 │   ├── SystemInfoSkill.java         — system-info, java-version
 │   └── FileSystemSkill.java         — list-files
 ├── executor/
@@ -168,7 +228,11 @@ src/main/java/vdas/
 │   └── SystemCommand.java           — Command model with aliases
 └── speech/
     ├── SpeechInput.java             — Speech input interface
-    └── VoskSpeechInput.java         — Vosk offline ASR implementation
+    └── WhisperSpeechInput.java      — Whisper STT microservice client
+
+whisper-stt/
+├── server.py                        — Python Whisper STT HTTP server
+└── requirements.txt                 — Python dependencies
 
 src/main/resources/
 └── commands.json                    — Command definitions
@@ -187,6 +251,7 @@ src/test/java/vdas/
 │   └── ClarificationPromptTest.java — Clarification input tests
 ├── skill/
 │   ├── SkillRegistryTest.java       — Dispatch & ordering tests
+│   ├── AppLauncherSkillTest.java    — Whitelist & canHandle tests
 │   ├── FileSystemSkillTest.java     — canHandle tests
 │   └── SystemInfoSkillTest.java     — canHandle tests
 └── config/
@@ -201,8 +266,10 @@ src/test/java/vdas/
 - **Deterministic** — Same input always produces same output
 - **No AI/ML/NLP** — Pure algorithmic resolution (Levenshtein + exact matching)
 - **Immutable Intent** — `Intent` is a value object, no mutation after creation
+- **Single source of truth** — `ConfidenceBand` computed once during Intent construction
 - **Single responsibility** — Only `IntentResolver` creates `Intent` objects
 - **Stateless skills** — Skills have no memory between executions
+- **Safety by default** — Dangerous/ambiguous commands never auto-execute
 - **Explicit registration** — No reflection, no DI framework
 
 ---
