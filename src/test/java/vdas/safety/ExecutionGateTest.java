@@ -2,9 +2,11 @@ package vdas.safety;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import vdas.intent.DefaultAmbiguityDetector;
 import vdas.intent.Intent;
 import vdas.model.SystemCommand;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -15,7 +17,7 @@ class ExecutionGateTest {
 
     @BeforeEach
     void setUp() {
-        gate = new ExecutionGate(new DefaultDangerClassifier());
+        gate = new ExecutionGate(new DefaultDangerClassifier(), new DefaultAmbiguityDetector());
     }
 
     // ── PRD validation matrix ──
@@ -55,8 +57,8 @@ class ExecutionGateTest {
     }
 
     @Test
-    void testMediumConfidence_confirms() {
-        // Fuzzy match — MEDIUM → CONFIRM regardless of danger
+    void testMediumConfidence_nonAmbiguous_confirms() {
+        // Fuzzy match — MEDIUM, no candidates → CONFIRM
         SystemCommand cmd = new SystemCommand("list-files", "dir /b", null);
         Intent intent = Intent.forTesting("list filez", "list filez",
                 Optional.of(cmd), 0.85);
@@ -65,7 +67,7 @@ class ExecutionGateTest {
 
     @Test
     void testMediumConfidence_dangerous_confirms() {
-        // "the quit" — MEDIUM, dangerous → CONFIRM
+        // "the quit" — MEDIUM, dangerous → CONFIRM (no candidates → not ambiguous)
         SystemCommand cmd = new SystemCommand("quit", "", null);
         Intent intent = Intent.forTesting("the quit", "quit",
                 Optional.of(cmd), 0.80);
@@ -80,7 +82,7 @@ class ExecutionGateTest {
         assertEquals(ExecutionGate.Decision.REJECT, gate.evaluate(intent));
     }
 
-    // ── Refinement 2: Unresolved intents rejected immediately ──
+    // ── Unresolved intents rejected immediately ──
 
     @Test
     void testUnresolved_rejects_immediately() {
@@ -91,7 +93,6 @@ class ExecutionGateTest {
 
     @Test
     void testUnresolved_highScoreStillRejects() {
-        // Even if somehow confidence is high but no command → REJECT
         Intent intent = Intent.forTesting("nothing", "nothing",
                 Optional.empty(), 1.0);
         assertEquals(ExecutionGate.Decision.REJECT, gate.evaluate(intent));
@@ -113,5 +114,28 @@ class ExecutionGateTest {
         Intent intent = Intent.forTesting("system info", "system info",
                 Optional.of(cmd), 1.0);
         assertEquals(ExecutionGate.Decision.EXECUTE, gate.evaluate(intent));
+    }
+
+    // ── Phase 2.3: CLARIFY ──
+
+    @Test
+    void testMediumConfidence_ambiguous_clarifies() {
+        // MEDIUM + 2 close-scoring candidates → CLARIFY
+        SystemCommand cmd1 = new SystemCommand("system-info", "", null);
+        SystemCommand cmd2 = new SystemCommand("java-version", "", null);
+        Intent intent = Intent.forTesting("sys ver", "sys ver",
+                Optional.of(cmd1), 0.85,
+                List.of(cmd1, cmd2), List.of(0.85, 0.82));
+        assertEquals(ExecutionGate.Decision.CLARIFY, gate.evaluate(intent));
+    }
+
+    @Test
+    void testMediumConfidence_nonAmbiguous_singleCandidate_confirms() {
+        // MEDIUM + 1 candidate → not ambiguous → CONFIRM
+        SystemCommand cmd = new SystemCommand("list-files", "dir /b", null);
+        Intent intent = Intent.forTesting("list filez", "list filez",
+                Optional.of(cmd), 0.85,
+                List.of(cmd), List.of(0.85));
+        assertEquals(ExecutionGate.Decision.CONFIRM, gate.evaluate(intent));
     }
 }
