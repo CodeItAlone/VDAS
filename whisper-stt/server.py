@@ -16,6 +16,7 @@ import io
 import threading
 import wave
 
+import numpy as np
 import whisper
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -75,7 +76,7 @@ async def transcribe(file: UploadFile = File(...)):
     if len(raw_bytes) == 0:
         raise HTTPException(status_code=400, detail="Empty file received.")
 
-    # ── 3. Validate WAV structure and duration ────────────────────
+    # ── 3. Validate WAV structure and extract PCM frames ──────────
     try:
         with wave.open(io.BytesIO(raw_bytes), "rb") as wf:
             sample_rate = wf.getframerate()
@@ -104,6 +105,9 @@ async def transcribe(file: UploadFile = File(...)):
                     status_code=400,
                     detail=f"Audio too long: {duration_sec:.1f}s. Max: {MAX_AUDIO_DURATION_SEC}s.",
                 )
+
+            # Read raw PCM frames directly — no ffmpeg needed
+            pcm_bytes = wf.readframes(n_frames)
     except HTTPException:
         raise
     except Exception as e:
@@ -111,7 +115,15 @@ async def transcribe(file: UploadFile = File(...)):
             status_code=400, detail=f"Invalid WAV file: {str(e)}"
         )
 
-    # ── 4. Transcribe with lock ───────────────────────────────────
+    # ── 4. Convert PCM to float32 numpy array ─────────────────────
+    # 16-bit signed PCM → float32 normalized to [-1.0, 1.0]
+    audio_np = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+    # Pad or trim to exactly 30 seconds (Whisper's expected input length)
+    # whisper.pad_or_trim handles this cleanly
+    audio_np = whisper.pad_or_trim(audio_np)
+
+    # ── 5. Transcribe with lock ───────────────────────────────────
     acquired = _inference_lock.acquire(timeout=10)
     if not acquired:
         raise HTTPException(
@@ -119,28 +131,19 @@ async def transcribe(file: UploadFile = File(...)):
             detail="STT service busy. Try again shortly.",
         )
     try:
-        # Whisper expects a file path or numpy array.
-        # Write to a temporary BytesIO-backed named temp file.
-        import tempfile
-        import os
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(raw_bytes)
-            tmp_path = tmp.name
-
-        try:
-            result = model.transcribe(
-                tmp_path,
-                language="en",
-                fp16=False,  # CPU-safe
-            )
-        finally:
-            os.unlink(tmp_path)
+        # Pass numpy array directly — bypasses load_audio() / ffmpeg entirely
+        mel = whisper.log_mel_spectrogram(audio_np, model.dims.n_mels).to(model.device)
+        options = whisper.DecodingOptions(language="en", fp16=False)
+        result = whisper.decode(model, mel, options)
+    except Exception as e:
+        print(f"[STT] Transcription error: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
         _inference_lock.release()
 
-    # ── 5. Return lowercase trimmed text ──────────────────────────
-    text = result.get("text", "").strip().lower()
+    # ── 6. Return lowercase trimmed text ──────────────────────────
+    # whisper.decode returns a DecodingResult object, not a dict
+    text = result.text.strip().lower()
     return JSONResponse(content={"text": text})
 
 
