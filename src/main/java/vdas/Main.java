@@ -11,7 +11,7 @@ import vdas.skill.Skill;
 import vdas.skill.SkillRegistry;
 import vdas.skill.SystemInfoSkill;
 import vdas.speech.SpeechInput;
-import vdas.speech.VoskSpeechInput;
+import vdas.speech.WhisperSpeechInput;
 
 import java.io.IOException;
 import java.util.List;
@@ -20,11 +20,9 @@ import java.util.Scanner;
 
 /**
  * Main entry point for the VDAS application.
- * Version: 2.0 — Voice + Keyboard input
+ * Version: 3.0 — Whisper STT + Keyboard input
  */
 public class Main {
-
-    private static final String VOSK_MODEL_PATH = "C:\\vosk-models\\vosk-model-en-us-0.22";
 
     public static void main(String[] args) {
         System.out.println("========================================");
@@ -64,19 +62,23 @@ public class Main {
 
             // ---------- INPUT MODE SELECTION ----------
             System.out.println("\nSelect input mode:");
-            System.out.println("  [V] Voice (offline, microphone)");
+            System.out.println("  [W] Whisper voice (offline, microphone)");
             System.out.println("  [K] Keyboard (default)");
             System.out.print("> ");
 
             String mode = scanner.nextLine().trim();
 
-            if (mode.equalsIgnoreCase("v")) {
-                try {
-                    speechInput = new VoskSpeechInput(VOSK_MODEL_PATH);
+            if (mode.equalsIgnoreCase("w")) {
+                WhisperSpeechInput whisper = new WhisperSpeechInput();
+                System.out.println("[INFO] Checking Whisper STT service...");
+
+                if (whisper.isServiceAvailable()) {
+                    speechInput = whisper;
                     voiceMode = true;
-                    System.out.println("[INFO] Voice input mode activated.");
-                } catch (Exception e) {
-                    System.err.println("[WARN] Voice input unavailable: " + e.getMessage());
+                    System.out.println("[INFO] Whisper STT service connected. Voice input mode activated.");
+                } else {
+                    System.err.println("[WARN] Whisper STT service is not running at http://localhost:8000");
+                    System.out.println("[INFO] Start the Python server: cd whisper-stt && python server.py");
                     System.out.println("[INFO] Falling back to keyboard input.");
                 }
             } else {
