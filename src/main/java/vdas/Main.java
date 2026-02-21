@@ -5,6 +5,9 @@ import vdas.executor.CommandExecutor;
 import vdas.intent.Intent;
 import vdas.intent.IntentResolver;
 import vdas.model.SystemCommand;
+import vdas.safety.ConfirmationManager;
+import vdas.safety.DefaultDangerClassifier;
+import vdas.safety.ExecutionGate;
 import vdas.skill.AppLauncherSkill;
 import vdas.skill.FileSystemSkill;
 import vdas.skill.Skill;
@@ -50,6 +53,21 @@ public class Main {
             if (args.length > 0) {
                 String rawInput = args[0];
                 Intent intent = intentResolver.resolve(rawInput);
+
+                ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier());
+                ExecutionGate.Decision decision = gate.evaluate(intent);
+
+                if (decision == ExecutionGate.Decision.REJECT) {
+                    System.out.println("[REJECTED] Low confidence: \"" + rawInput + "\"");
+                    return;
+                }
+
+                // CLI mode: no confirmation possible, execute only if EXECUTE
+                if (decision == ExecutionGate.Decision.CONFIRM) {
+                    System.out.println("[REJECTED] Command requires confirmation (not available in CLI mode): \""
+                            + rawInput + "\"");
+                    return;
+                }
 
                 Optional<Skill> skill = skillRegistry.findSkill(intent);
                 if (skill.isPresent()) {
@@ -121,6 +139,8 @@ public class Main {
             SpeechInput speechInput) {
 
         boolean voiceMode = (speechInput != null);
+        ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier());
+        ConfirmationManager confirmationMgr = new ConfirmationManager();
 
         while (true) {
             String input;
@@ -153,6 +173,9 @@ public class Main {
                 input = scanner.nextLine().trim();
             }
 
+            // ── Keyboard shortcut: q / quit ──
+            // These bypass the safety gate by design.
+            // Voice / intent-based "quit" must always pass through ExecutionGate.
             if (input.equalsIgnoreCase("q") || input.equalsIgnoreCase("quit")) {
                 System.out.println("Exiting VDAS...");
                 break;
@@ -162,7 +185,7 @@ public class Main {
                 continue;
             }
 
-            // ---------- COMMAND RESOLUTION → SKILL DISPATCH ----------
+            // ---------- COMMAND RESOLUTION → EXECUTION GATE → SKILL DISPATCH ----------
             Intent intent;
             try {
                 int index = Integer.parseInt(input) - 1;
@@ -175,11 +198,25 @@ public class Main {
                 }
             } catch (NumberFormatException e) {
                 intent = intentResolver.resolve(input);
-                if (intent.getResolvedCommand().isEmpty()) {
-                    System.out.println("[INTENT] No confident match for: \"" + input + "\"");
+            }
+
+            // ── Execution gate ──
+            ExecutionGate.Decision decision = gate.evaluate(intent);
+
+            if (decision == ExecutionGate.Decision.REJECT) {
+                System.out.println("[REJECTED] Low confidence: \"" + input + "\"");
+                listCommands(commands);
+                continue;
+            }
+
+            if (decision == ExecutionGate.Decision.CONFIRM) {
+                if (!confirmationMgr.confirm(intent, scanner)) {
+                    System.out.println("[CANCELLED] Command cancelled by user.");
+                    continue;
                 }
             }
 
+            // ── Skill dispatch (EXECUTE or confirmed CONFIRM) ──
             Optional<Skill> skill = skillRegistry.findSkill(intent);
             if (skill.isPresent()) {
                 skill.get().execute(intent);
