@@ -1,26 +1,28 @@
 package vdas.safety;
 
+import vdas.intent.AmbiguityDetector;
 import vdas.intent.ConfidenceBand;
 import vdas.intent.Intent;
 
 /**
  * Central execution gate that determines whether an intent should be
- * executed immediately, require confirmation, or be rejected.
+ * executed immediately, require confirmation, require clarification,
+ * or be rejected.
  *
- * Decision table (from PRD):
+ * Decision table:
  * 
  * <pre>
- *   ConfidenceBand | Dangerous | Decision
- *   ───────────────┼───────────┼──────────
- *   (unresolved)   | —         | REJECT
- *   HIGH           | NO        | EXECUTE
- *   HIGH           | YES       | CONFIRM
- *   MEDIUM         | *         | CONFIRM
- *   LOW            | *         | REJECT
+ *   ConfidenceBand | Dangerous | Ambiguous | Decision
+ *   ───────────────┼───────────┼───────────┼──────────
+ *   (unresolved)   | —         | —         | REJECT
+ *   HIGH           | NO        | —         | EXECUTE
+ *   HIGH           | YES       | —         | CONFIRM
+ *   MEDIUM         | *         | YES       | CLARIFY
+ *   MEDIUM         | *         | NO        | CONFIRM
+ *   LOW            | *         | *         | REJECT
  * </pre>
  *
- * Unresolved intents are rejected immediately without danger evaluation
- * (Refinement 2).
+ * Unresolved intents are rejected immediately without danger evaluation.
  */
 public class ExecutionGate {
 
@@ -32,14 +34,18 @@ public class ExecutionGate {
         EXECUTE,
         /** Ask the user for confirmation before executing. */
         CONFIRM,
+        /** Ask the user to clarify which command they meant. */
+        CLARIFY,
         /** Reject the intent — do not execute. */
         REJECT
     }
 
     private final DangerClassifier dangerClassifier;
+    private final AmbiguityDetector ambiguityDetector;
 
-    public ExecutionGate(DangerClassifier dangerClassifier) {
+    public ExecutionGate(DangerClassifier dangerClassifier, AmbiguityDetector ambiguityDetector) {
         this.dangerClassifier = dangerClassifier;
+        this.ambiguityDetector = ambiguityDetector;
     }
 
     /**
@@ -49,8 +55,7 @@ public class ExecutionGate {
      * @return the execution decision
      */
     public Decision evaluate(Intent intent) {
-        // Refinement 2: Unresolved intents are always rejected immediately.
-        // Do not call DangerClassifier for unresolved intents.
+        // Unresolved intents are always rejected immediately.
         if (intent.getResolvedCommand().isEmpty()) {
             return Decision.REJECT;
         }
@@ -62,6 +67,9 @@ public class ExecutionGate {
                 return Decision.REJECT;
 
             case MEDIUM:
+                if (ambiguityDetector.isAmbiguous(intent)) {
+                    return Decision.CLARIFY;
+                }
                 return Decision.CONFIRM;
 
             case HIGH:
