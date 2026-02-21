@@ -23,6 +23,7 @@ public final class Intent {
     private final String normalizedInput;
     private final Optional<SystemCommand> resolvedCommand;
     private final double confidence;
+    private final ConfidenceBand confidenceBand;
     private final Map<String, String> parameters;
 
     /**
@@ -44,6 +45,7 @@ public final class Intent {
         this.normalizedInput = normalizedInput;
         this.resolvedCommand = resolvedCommand;
         this.confidence = confidence;
+        this.confidenceBand = ConfidenceBand.of(confidence);
         this.parameters = Collections.unmodifiableMap(parameters);
     }
 
@@ -64,6 +66,14 @@ public final class Intent {
     }
 
     /**
+     * Returns the confidence band assigned during construction.
+     * This is the single source of truth — never recomputed downstream.
+     */
+    public ConfidenceBand getConfidenceBand() {
+        return confidenceBand;
+    }
+
+    /**
      * Returns an unmodifiable map of parameters extracted during intent resolution.
      * For example, an "open-app" intent may contain {@code {"app": "chrome"}}.
      *
@@ -78,7 +88,8 @@ public final class Intent {
         String base = "Intent{rawInput='" + rawInput + "'"
                 + ", normalizedInput='" + normalizedInput + "'"
                 + ", resolved=" + resolvedCommand.map(SystemCommand::getName).orElse("none")
-                + ", confidence=" + String.format("%.2f", confidence);
+                + ", confidence=" + String.format("%.2f", confidence)
+                + ", band=" + confidenceBand;
         if (!parameters.isEmpty()) {
             base += ", parameters=" + parameters;
         }
