@@ -116,19 +116,23 @@ Input normalization: lowercase → strip punctuation → collapse whitespace →
 
 ## Safety & Confirmation Gate
 
-After intent resolution, an **ExecutionGate** evaluates the intent based on its `ConfidenceBand` and danger level:
+After intent resolution, an **ExecutionGate** evaluates the intent based on its `ConfidenceBand`, danger level, and ambiguity:
 
-| ConfidenceBand | Dangerous | Decision |
-|----------------|-----------|----------|
-| HIGH           | NO        | EXECUTE  |
-| HIGH           | YES       | CONFIRM  |
-| MEDIUM         | *         | CONFIRM  |
-| LOW            | *         | REJECT   |
-| (unresolved)   | —         | REJECT   |
+| ConfidenceBand | Dangerous | Ambiguous | Decision |
+|----------------|-----------|-----------|----------|
+| HIGH           | NO        | —         | EXECUTE  |
+| HIGH           | YES       | —         | CONFIRM  |
+| MEDIUM         | *         | YES       | CLARIFY  |
+| MEDIUM         | *         | NO        | CONFIRM  |
+| LOW            | *         | *         | REJECT   |
+| (unresolved)   | —         | —         | REJECT   |
 
 * **Dangerous Commands**: Hardcoded set (`quit`, `shutdown`, `restart`, `delete`, `remove`, `format`).
-* **Confirmation**: If required, prompts `Are you sure you want to <action>? (yes / no)`.
-* Unresolved intents are rejected immediately. Keyboard shortcut (`q` / `quit`) bypasses this gate for convenience.
+* **Ambiguity**: Detected when MEDIUM band + 2+ candidates + top-two score gap ≤ 0.10.
+* **Confirmation**: Prompts `Are you sure you want to <action>? (yes / no)`.
+* **Clarification**: Prints numbered candidate list, accepts index or exact name. One shot only.
+* Clarified intents are re-gated through ExecutionGate (dangerous clarified commands still require confirmation).
+* Keyboard shortcut (`q` / `quit`) bypasses this gate for convenience.
 
 ---
 
@@ -138,16 +142,19 @@ After intent resolution, an **ExecutionGate** evaluates the intent based on its 
 src/main/java/vdas/
 ├── Main.java                        — Entry point, input mode selection, main loop
 ├── intent/
-│   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence, band)
+│   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence, band, candidates)
 │   ├── IntentResolver.java          — Deterministic resolution engine (exact → alias → fuzzy)
 │   ├── IntentNormalizer.java        — Input normalization (voice + keyboard)
 │   ├── ConfidenceBand.java          — HIGH/MEDIUM/LOW confidence bands
+│   ├── AmbiguityDetector.java       — Ambiguity detection interface
+│   ├── DefaultAmbiguityDetector.java — Score-based ambiguity detection
 │   └── LevenshteinDistance.java     — Edit distance & similarity scoring
 ├── safety/
-│   ├── ExecutionGate.java           — Evaluates confidence vs danger (EXECUTE/CONFIRM/REJECT)
+│   ├── ExecutionGate.java           — Evaluates confidence×danger×ambiguity (EXECUTE/CONFIRM/CLARIFY/REJECT)
 │   ├── DangerClassifier.java        — Danger classification interface
 │   ├── DefaultDangerClassifier.java — Hardcoded list of dangerous commands
-│   └── ConfirmationManager.java     — Yes/no user confirmation prompt
+│   ├── ConfirmationManager.java     — Yes/no user confirmation prompt
+│   └── ClarificationPrompt.java     — Ambiguous command clarification prompt
 ├── skill/
 │   ├── Skill.java                   — Skill interface (canHandle + execute)
 │   ├── SkillRegistry.java           — First-match skill dispatcher
@@ -171,11 +178,13 @@ src/test/java/vdas/
 │   ├── IntentTest.java              — Immutability & structure tests
 │   ├── IntentResolverTest.java      — Resolution pipeline tests
 │   ├── IntentNormalizerTest.java    — Normalization tests
+│   ├── AmbiguityDetectorTest.java   — Score-based ambiguity tests
 │   └── LevenshteinDistanceTest.java — Edit distance tests
 ├── safety/
-│   ├── ExecutionGateTest.java       — PRD validation matrix tests
+│   ├── ExecutionGateTest.java       — PRD validation matrix + CLARIFY tests
 │   ├── DangerClassifierTest.java    — Classification rules tests
-│   └── ConfirmationManagerTest.java — Input acceptance tests
+│   ├── ConfirmationManagerTest.java — Confirmation input tests
+│   └── ClarificationPromptTest.java — Clarification input tests
 ├── skill/
 │   ├── SkillRegistryTest.java       — Dispatch & ordering tests
 │   ├── FileSystemSkillTest.java     — canHandle tests
