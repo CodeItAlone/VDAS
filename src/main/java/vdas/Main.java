@@ -1,7 +1,9 @@
 package vdas;
 
+import vdas.agent.AgentState;
 import vdas.config.CommandLoader;
 import vdas.executor.CommandExecutor;
+import vdas.intent.ContextualIntentResolver;
 import vdas.intent.DefaultAmbiguityDetector;
 import vdas.intent.Intent;
 import vdas.intent.IntentResolver;
@@ -150,6 +152,8 @@ public class Main {
         ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier(), new DefaultAmbiguityDetector());
         ConfirmationManager confirmationMgr = new ConfirmationManager();
         ClarificationPrompt clarificationPrompt = new ClarificationPrompt();
+        ContextualIntentResolver contextualResolver = new ContextualIntentResolver();
+        AgentState state = AgentState.IDLE;
 
         while (true) {
             String input;
@@ -209,6 +213,14 @@ public class Main {
                 intent = intentResolver.resolve(input);
             }
 
+            // ── Contextual follow-up resolution ──
+            Optional<Intent> contextual = contextualResolver.resolve(intent, sessionContext);
+            if (contextual.isPresent()) {
+                System.out.println("[CONTEXT] Resolved follow-up: \"" + input + "\" → "
+                        + contextual.get().getResolvedCommand().get().getName());
+                intent = contextual.get();
+            }
+
             // ── Execution gate ──
             ExecutionGate.Decision decision = gate.evaluate(intent);
 
@@ -219,6 +231,7 @@ public class Main {
             }
 
             if (decision == ExecutionGate.Decision.CLARIFY) {
+                state = AgentState.AWAITING_CLARIFICATION;
                 Optional<SystemCommand> clarified = clarificationPrompt.ask(intent, scanner);
                 if (clarified.isPresent()) {
                     // Refinement 2: Re-gate the clarified intent
@@ -227,17 +240,21 @@ public class Main {
 
                     if (clarifiedDecision == ExecutionGate.Decision.REJECT) {
                         System.out.println("[REJECTED] Clarified command rejected.");
+                        state = AgentState.IDLE;
                         continue;
                     }
 
                     if (clarifiedDecision == ExecutionGate.Decision.CONFIRM) {
+                        state = AgentState.AWAITING_CONFIRMATION;
                         if (!confirmationMgr.confirm(clarifiedIntent, scanner)) {
                             System.out.println("[CANCELLED] Command cancelled by user.");
+                            state = AgentState.IDLE;
                             continue;
                         }
                     }
 
                     // Dispatch clarified intent
+                    state = AgentState.EXECUTING;
                     Optional<Skill> clarifiedSkill = skillRegistry.findSkill(clarifiedIntent);
                     if (clarifiedSkill.isPresent()) {
                         clarifiedSkill.get().execute(clarifiedIntent);
@@ -249,17 +266,21 @@ public class Main {
                 } else {
                     System.out.println("[REJECTED] Ambiguous intent.");
                 }
+                state = AgentState.IDLE;
                 continue;
             }
 
             if (decision == ExecutionGate.Decision.CONFIRM) {
+                state = AgentState.AWAITING_CONFIRMATION;
                 if (!confirmationMgr.confirm(intent, scanner)) {
                     System.out.println("[CANCELLED] Command cancelled by user.");
+                    state = AgentState.IDLE;
                     continue;
                 }
             }
 
             // ── Skill dispatch (EXECUTE or confirmed CONFIRM) ──
+            state = AgentState.EXECUTING;
             Optional<Skill> skill = skillRegistry.findSkill(intent);
             if (skill.isPresent()) {
                 skill.get().execute(intent);
@@ -269,6 +290,7 @@ public class Main {
                 System.out.println("[WARN] No skill found for: " + intent);
                 listCommands(commands);
             }
+            state = AgentState.IDLE;
         }
     }
 }
