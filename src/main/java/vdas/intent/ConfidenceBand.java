@@ -34,4 +34,20 @@ public enum ConfidenceBand {
             return LOW;
         }
     }
+
+    /**
+     * Returns {@code true} if this band is at least as confident as the
+     * given minimum band.
+     *
+     * <p>
+     * Ordinal order: HIGH (0) &gt; MEDIUM (1) &gt; LOW (2).
+     * A lower ordinal means higher confidence.
+     * </p>
+     *
+     * @param minimum the minimum confidence band to check against
+     * @return true if this band meets or exceeds the minimum
+     */
+    public boolean isAtLeast(ConfidenceBand minimum) {
+        return this.ordinal() <= minimum.ordinal();
+    }
 }
