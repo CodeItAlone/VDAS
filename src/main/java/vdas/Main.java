@@ -15,6 +15,7 @@ import vdas.skill.FileSystemSkill;
 import vdas.skill.Skill;
 import vdas.skill.SkillRegistry;
 import vdas.skill.SystemInfoSkill;
+import vdas.session.SessionContext;
 import vdas.speech.SpeechInput;
 import vdas.speech.WhisperSpeechInput;
 
@@ -37,6 +38,7 @@ public class Main {
         CommandLoader loader = new CommandLoader();
         CommandExecutor executor = new CommandExecutor();
         Scanner scanner = new Scanner(System.in);
+        SessionContext sessionContext = new SessionContext();
 
         // ── Skill registration (explicit, no reflection) ──
         SkillRegistry skillRegistry = new SkillRegistry(List.of(
@@ -74,6 +76,8 @@ public class Main {
                 Optional<Skill> skill = skillRegistry.findSkill(intent);
                 if (skill.isPresent()) {
                     skill.get().execute(intent);
+                    sessionContext.update(intent,
+                            intent.getResolvedCommand().orElseThrow(), skill.get());
                 } else {
                     System.err.println("[WARN] No skill found for: " + intent);
                 }
@@ -112,7 +116,8 @@ public class Main {
                     skillRegistry,
                     commands,
                     scanner,
-                    voiceMode ? speechInput : null);
+                    voiceMode ? speechInput : null,
+                    sessionContext);
 
         } catch (IOException e) {
             System.err.println("[ERROR] Failed to start VDAS: " + e.getMessage());
@@ -138,7 +143,8 @@ public class Main {
             SkillRegistry skillRegistry,
             List<SystemCommand> commands,
             Scanner scanner,
-            SpeechInput speechInput) {
+            SpeechInput speechInput,
+            SessionContext sessionContext) {
 
         boolean voiceMode = (speechInput != null);
         ExecutionGate gate = new ExecutionGate(new DefaultDangerClassifier(), new DefaultAmbiguityDetector());
@@ -235,6 +241,8 @@ public class Main {
                     Optional<Skill> clarifiedSkill = skillRegistry.findSkill(clarifiedIntent);
                     if (clarifiedSkill.isPresent()) {
                         clarifiedSkill.get().execute(clarifiedIntent);
+                        sessionContext.update(clarifiedIntent,
+                                clarified.get(), clarifiedSkill.get());
                     } else {
                         System.out.println("[WARN] No skill found for: " + clarifiedIntent);
                     }
@@ -255,6 +263,8 @@ public class Main {
             Optional<Skill> skill = skillRegistry.findSkill(intent);
             if (skill.isPresent()) {
                 skill.get().execute(intent);
+                sessionContext.update(intent,
+                        intent.getResolvedCommand().orElseThrow(), skill.get());
             } else {
                 System.out.println("[WARN] No skill found for: " + intent);
                 listCommands(commands);
