@@ -187,4 +187,30 @@ public final class Intent {
         return new Intent(rawInput, normalizedInput, resolvedCommand, confidence,
                 Collections.emptyMap(), candidateCommands, candidateScores);
     }
+
+    /**
+     * Creates a new Intent for a contextual repeat — re-executing the last
+     * successfully executed command.
+     *
+     * <p>
+     * The new intent carries the current raw input (e.g. "again"),
+     * the resolved command from the previous execution, and the original
+     * parameters (e.g. {@code {app: "chrome"}}).
+     * </p>
+     *
+     * <p>
+     * Confidence is set to 1.0 (HIGH) because contextual repeats are
+     * deterministic — the user explicitly asked to repeat.
+     * </p>
+     *
+     * @param rawInput   the current raw user input (e.g. "again")
+     * @param command    the last successfully executed command
+     * @param parameters the parameters from the last execution
+     * @return a new immutable Intent for the repeated action
+     */
+    public static Intent fromContextualRepeat(String rawInput,
+            SystemCommand command, Map<String, String> parameters) {
+        String normalized = rawInput.trim().toLowerCase().replaceAll("\\s+", "-");
+        return new Intent(rawInput, normalized, Optional.of(command), 1.0, parameters);
+    }
 }
