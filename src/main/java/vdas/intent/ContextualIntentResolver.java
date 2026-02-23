@@ -65,6 +65,13 @@ public class ContextualIntentResolver {
             "open", "launch", "start", "go to", "navigate to");
 
     /**
+     * Whitelisted websites for contextual interpretation instead of local app
+     * execution.
+     */
+    private static final Set<String> WHITELISTED_WEBSITES = Set.of(
+            "youtube", "google", "github");
+
+    /**
      * Attempts to resolve the given intent using the session context.
      *
      * <p>
@@ -77,6 +84,31 @@ public class ContextualIntentResolver {
      * @return a contextually resolved Intent, or empty
      */
     public Optional<Intent> resolve(Intent intent, SessionContext context) {
+
+        // ── Strategy 0: Context-Aware Website Upgrade ──
+        // Intercept already-resolved "open-app" intents where the target is a website,
+        // because IntentResolver might have matched "youtube" as a high-confidence app
+        // alias.
+        if (context.hasContext() && intent.getResolvedCommand().isPresent()) {
+            SystemCommand cmd = intent.getResolvedCommand().get();
+            if (OPEN_APP_COMMAND.equals(cmd.getName())) {
+                String targetApp = intent.getParameters().get("app");
+                if (targetApp != null && WHITELISTED_WEBSITES.contains(targetApp.toLowerCase())) {
+                    Intent lastIntent = context.getLastIntent();
+                    String lastApp = lastIntent.getParameters().get("app");
+
+                    // If the last opened app was a browser
+                    if ("chrome".equals(lastApp)) {
+                        Map<String, String> newParams = new HashMap<>();
+                        newParams.put("app", "chrome");
+                        newParams.put("url", targetApp);
+
+                        return Optional.of(Intent.fromContextualFollowUp(
+                                intent.getRawInput(), cmd, newParams));
+                    }
+                }
+            }
+        }
 
         // ── Guard rules (strict, ordered) ──
 
