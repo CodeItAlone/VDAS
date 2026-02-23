@@ -213,4 +213,29 @@ public final class Intent {
         String normalized = rawInput.trim().toLowerCase().replaceAll("\\s+", "-");
         return new Intent(rawInput, normalized, Optional.of(command), 1.0, parameters);
     }
+
+    /**
+     * Creates a new Intent for a contextual follow-up — resolving a partial
+     * command using the previous session context.
+     *
+     * <p>
+     * Examples: "close it" (close the last-opened app), "open youtube"
+     * (navigate the last-opened browser to a URL).
+     * </p>
+     *
+     * <p>
+     * Confidence is set to 1.0 (HIGH) because contextual follow-ups are
+     * deterministic — the user's intent is unambiguous given the context.
+     * </p>
+     *
+     * @param rawInput   the current raw user input (e.g. "close it")
+     * @param command    the resolved system command
+     * @param parameters the parameters for the follow-up action
+     * @return a new immutable Intent for the follow-up action
+     */
+    public static Intent fromContextualFollowUp(String rawInput,
+            SystemCommand command, Map<String, String> parameters) {
+        String normalized = rawInput.trim().toLowerCase().replaceAll("\\s+", "-");
+        return new Intent(rawInput, normalized, Optional.of(command), 1.0, parameters);
+    }
 }
