@@ -1,7 +1,10 @@
 package vdas.intent;
 
+import vdas.model.SystemCommand;
 import vdas.session.SessionContext;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -9,9 +12,22 @@ import java.util.Set;
  * Deterministic follow-up intent resolver using session context.
  *
  * <p>
- * Resolves partial or underspecified commands (e.g. "again", "repeat")
- * by looking at what was last successfully executed in the current session.
+ * Resolves partial or underspecified commands (e.g. "again", "close it",
+ * "open youtube") by looking at what was last successfully executed in
+ * the current session.
  * </p>
+ *
+ * <p>
+ * <b>Strategies (evaluated in order):</b>
+ * </p>
+ * <ol>
+ * <li><b>Repeat</b> — "again", "repeat", etc. → re-execute last command</li>
+ * <li><b>Close-it</b> — "close it", "close" → close the last-opened app
+ * (only if last command was "open-app")</li>
+ * <li><b>Contextual navigation</b> — "open youtube" → navigate the
+ * last-opened browser to a URL (only if last command was "open-app"
+ * and current input is an unresolved "open &lt;target&gt;")</li>
+ * </ol>
  *
  * <p>
  * <b>Rules:</b>
@@ -21,11 +37,8 @@ import java.util.Set;
  * <li>Never fabricates commands — only re-uses existing context</li>
  * <li>Never mutates the incoming Intent</li>
  * <li>Context is advisory, never authoritative</li>
+ * <li>No NLP, no guessing, no learning. Fully deterministic.</li>
  * </ul>
- *
- * <p>
- * No NLP, no guessing, no learning. Fully deterministic.
- * </p>
  */
 public class ContextualIntentResolver {
 
@@ -38,6 +51,18 @@ public class ContextualIntentResolver {
             "one more time",
             "repeat that",
             "run it again");
+
+    private static final Set<String> CLOSE_PHRASES = Set.of(
+            "close",
+            "close it",
+            "close that");
+
+    /** The command name that represents app-launch actions. */
+    private static final String OPEN_APP_COMMAND = "open-app";
+
+    /** Leading verbs that signal an "open <target>" follow-up. */
+    private static final Set<String> NAVIGATION_VERBS = Set.of(
+            "open", "launch", "start", "go to", "navigate to");
 
     /**
      * Attempts to resolve the given intent using the session context.
@@ -98,6 +123,116 @@ public class ContextualIntentResolver {
             return Optional.of(repeated);
         }
 
+        // ── Strategy 2: Close-it ──
+        if (CLOSE_PHRASES.contains(normalized)) {
+            return resolveCloseIt(intent, context);
+        }
+
+        // ── Strategy 3: Contextual navigation ──
+        // Only when the intent is unresolved (LOW confidence, no command)
+        if (intent.getResolvedCommand().isEmpty()) {
+            return resolveContextualNavigation(intent, context, normalized);
+        }
+
         return Optional.empty();
+    }
+
+    /**
+     * Resolves "close it" / "close that" / "close" by closing the
+     * last-opened app — but ONLY if the last command was "open-app".
+     *
+     * <p>
+     * Never fabricates a close command for non-app contexts.
+     * </p>
+     */
+    private Optional<Intent> resolveCloseIt(Intent intent, SessionContext context) {
+        SystemCommand lastCommand = context.getLastCommand();
+        Intent lastIntent = context.getLastIntent();
+
+        // Only valid if the last executed command was "open-app"
+        if (lastCommand == null || !OPEN_APP_COMMAND.equals(lastCommand.getName())) {
+            return Optional.empty();
+        }
+
+        // Need the app parameter from the last intent
+        String appName = lastIntent.getParameters().get("app");
+        if (appName == null || appName.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Build parameters for the close action
+        Map<String, String> params = new HashMap<>();
+        params.put("app", appName);
+        params.put("action", "close");
+
+        Intent followUp = Intent.fromContextualFollowUp(
+                intent.getRawInput(), lastCommand, params);
+
+        return Optional.of(followUp);
+    }
+
+    /**
+     * Resolves contextual navigation like "open youtube" when the last
+     * command was "open-app" (e.g., the user just opened Chrome).
+     *
+     * <p>
+     * Extracts the target from "open &lt;target&gt;" and creates a follow-up
+     * intent that re-uses the last app with an added "url" parameter.
+     * </p>
+     *
+     * <p>
+     * No NLP, no guessing — just deterministic verb-prefix stripping
+     * and context re-use.
+     * </p>
+     */
+    private Optional<Intent> resolveContextualNavigation(
+            Intent intent, SessionContext context, String normalized) {
+
+        SystemCommand lastCommand = context.getLastCommand();
+        Intent lastIntent = context.getLastIntent();
+
+        // Only valid if the last command was "open-app"
+        if (lastCommand == null || !OPEN_APP_COMMAND.equals(lastCommand.getName())) {
+            return Optional.empty();
+        }
+
+        // Need the app parameter from the last intent
+        String lastApp = lastIntent.getParameters().get("app");
+        if (lastApp == null || lastApp.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Extract the target from "open <target>" / "go to <target>"
+        String target = extractNavigationTarget(normalized);
+        if (target.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Build parameters: re-use last app, add URL target
+        Map<String, String> params = new HashMap<>();
+        params.put("app", lastApp);
+        params.put("url", target);
+
+        Intent followUp = Intent.fromContextualFollowUp(
+                intent.getRawInput(), lastCommand, params);
+
+        return Optional.of(followUp);
+    }
+
+    /**
+     * Strips a leading navigation verb from the input and returns the target.
+     * "open youtube" → "youtube", "go to gmail" → "gmail".
+     * Returns empty string if no navigation verb is found.
+     */
+    private String extractNavigationTarget(String normalized) {
+        for (String verb : NAVIGATION_VERBS) {
+            if (normalized.startsWith(verb + " ")) {
+                String target = normalized.substring(verb.length()).trim();
+                if (!target.isEmpty()) {
+                    return target;
+                }
+            }
+        }
+        return "";
     }
 }
