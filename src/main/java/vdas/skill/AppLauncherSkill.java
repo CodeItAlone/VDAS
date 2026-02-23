@@ -58,11 +58,20 @@ public class AppLauncherSkill implements Skill {
             return;
         }
 
-        System.out.println("[APP-LAUNCHER] Launching: " + appName + " → " + path);
+        String url = intent.getParameters().get("url");
 
         try {
-            new ProcessBuilder(path).start();
-            System.out.println("[APP-LAUNCHER] Successfully launched: " + appName);
+            if (url != null && !url.isEmpty()) {
+                // Contextual navigation: launch browser with URL argument
+                System.out.println("[APP-LAUNCHER] Navigating: " + appName + " → " + url);
+                new ProcessBuilder(path, url).start();
+                System.out.println("[APP-LAUNCHER] Successfully navigated " + appName + " to: " + url);
+            } else {
+                // Standard app launch
+                System.out.println("[APP-LAUNCHER] Launching: " + appName + " → " + path);
+                new ProcessBuilder(path).start();
+                System.out.println("[APP-LAUNCHER] Successfully launched: " + appName);
+            }
         } catch (IOException e) {
             System.err.println("[APP-LAUNCHER] Failed to launch " + appName + ": " + e.getMessage());
         }
