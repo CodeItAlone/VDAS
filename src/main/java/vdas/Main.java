@@ -13,6 +13,7 @@ import vdas.safety.ConfirmationManager;
 import vdas.safety.DefaultDangerClassifier;
 import vdas.safety.ExecutionGate;
 import vdas.skill.AppLauncherSkill;
+import vdas.skill.BrowserSkill;
 import vdas.skill.FileSystemSkill;
 import vdas.skill.Skill;
 import vdas.skill.SkillRegistry;
@@ -45,6 +46,7 @@ public class Main {
 
         // ── Skill registration (explicit, no reflection) ──
         SkillRegistry skillRegistry = new SkillRegistry(List.of(
+                new BrowserSkill(),
                 new AppLauncherSkill(),
                 new SystemInfoSkill(executor),
                 new FileSystemSkill(executor)));
