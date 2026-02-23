@@ -8,22 +8,27 @@
 
 ```
 Raw Input (voice / keyboard)
-  → IntentNormalizer (lowercase, strip punctuation, remove articles)
-      → IntentResolver (exact → alias → verb-prefix → fuzzy)
-          → Intent { rawInput, normalizedInput, resolvedCommand, confidence, band, candidates }
-              → ExecutionGate (checks Danger / Ambiguity / prompts Confirmation or Clarification)
-                  → SkillRegistry
-                      → Skill.execute(Intent)
+  → CommandSplitter (parses "and", "then" → List<Step>)
+      → FOR EACH Step:
+          → IntentNormalizer (lowercase, strip punctuation, remove articles)
+              → IntentResolver (exact → alias → verb-prefix → fuzzy)
+                  → ContextualIntentResolver (enriches Intent using SessionContext)
+                      → Intent { rawInput, normalizedInput, resolvedCommand, confidence, band, parameters, candidates }
+                          → ExecutionGate (checks Danger / Ambiguity / prompts Confirmation or Clarification)
+                              → SkillRegistry
+                                  → Skill.execute(Intent)
+                                  → SessionContext.update(Intent, Command, Skill)
 ```
 
 | Layer | Responsibility |
 |-------|---------------|
+| **Parsing** | Split compound commands (e.g., "X and then Y") into sequential steps (Max 3) |
 | **Speech** | Offline voice capture via Whisper STT (Python microservice) |
-| **Intent** | Normalize input → resolve command → compute confidence & band → detect ambiguity |
+| **Intent** | Resolve command → compute confidence → Contextual follow-up enrichment |
+| **Context** | Maintain session state (last app opened) to enable chained navigation |
 | **Safety** | Execution gate, danger classification, confirmation, clarification |
-| **Skill** | Domain-scoped command execution (stateless) |
-| **Executor** | OS-level process execution via `ProcessBuilder` |
-| **Config** | JSON-driven command definitions with aliases |
+| **Skill** | Domain-scoped command execution (AppLauncher, FileSystem, Browser, etc.) |
+| **Config** | JSON-driven command definitions with whitelisted apps and websites |
 
 ---
 
@@ -84,6 +89,33 @@ Select input mode:
 - **Voice mode** — Speak a command (e.g., "java version"). VDAS captures audio via Whisper STT, resolves intent, and executes.
 - **Keyboard mode** — Type the command name or number.
 - Switch modes: `k` (keyboard) / `q` (quit) at any time.
+
+---
+
+## Multi-Step Commands
+
+VDAS supports sequential execution of up to **3 steps** in a single input string. Use the following connectors:
+- `and`
+- `then`
+- `and then`
+
+**Example:** `"open chrome and then open youtube"`
+1.  **Step 1:** Opens Chrome.
+2.  **Step 2:** Navigates Chrome to YouTube (Context-aware).
+
+> [!IMPORTANT]
+> If any step fails (e.g., a dangerous command is rejected, or clarification is cancelled), all subsequent steps are **aborted** for safety.
+
+---
+
+## Session Context & Follow-ups
+
+VDAS maintains a transient **SessionContext** to enable fluid, multi-step interactions without repeating targets.
+
+### Contextual Resolution Strategies
+1.  **Repeat:** "again", "repeat that" → Re-runs the last successful action.
+2.  **Close-it:** "close it", "close that" → Closes the last opened application.
+3.  **Contextual Navigation:** "open youtube" (after "open chrome") → Upgrades "youtube" from an application to a URL target for the active browser.
 
 ---
 
@@ -187,11 +219,12 @@ Typing `q` or `quit` in the interactive loop exits immediately — this bypasses
 
 | Skill | Handles | Description |
 |-------|---------|-------------|
-| **AppLauncherSkill** | `open-app` | Launches whitelisted desktop apps (chrome, vscode, explorer, notepad, calculator) |
+| **BrowserSkill** | `open-app` + `url` | Navigates whitelisted browsers to whitelisted websites |
+| **AppLauncherSkill** | `open-app` | Launches whitelisted desktop apps (chrome, vscode, etc.) |
 | **SystemInfoSkill** | `system-info`, `java-version` | Runs system commands via `CommandExecutor` |
 | **FileSystemSkill** | `list-files` | Runs file system commands via `CommandExecutor` |
 
-Skills are stateless, registered explicitly (no reflection), and matched via `SkillRegistry` (first-match).
+Skills are stateless, registered explicitly (no reflection), and matched via `SkillRegistry` (first-match). `BrowserSkill` is prioritized to intercept contextual URL navigation.
 
 ---
 
@@ -199,36 +232,31 @@ Skills are stateless, registered explicitly (no reflection), and matched via `Sk
 
 ```
 src/main/java/vdas/
-├── Main.java                        — Entry point, input mode selection, main loop
+├── Main.java                        — Entry point, input execution loop
+├── agent/
+│   └── AgentState.java              — Lifecycle states (IDLE, RESOLVING, etc.)
 ├── intent/
-│   ├── Intent.java                  — Immutable intent model (raw, normalized, command, confidence, band, candidates)
-│   ├── IntentResolver.java          — Deterministic resolution engine (exact → alias → verb-prefix → fuzzy)
-│   ├── IntentNormalizer.java        — Input normalization (voice + keyboard)
-│   ├── ConfidenceBand.java          — HIGH/MEDIUM/LOW confidence bands
-│   ├── AmbiguityDetector.java       — Ambiguity detection interface
-│   ├── DefaultAmbiguityDetector.java — Score-based ambiguity detection (gap ≤ 0.10)
-│   └── LevenshteinDistance.java     — Edit distance & similarity scoring
+│   ├── Intent.java                  — Immutable intent model
+│   ├── IntentResolver.java          — Primary resolution engine
+│   ├── ContextualIntentResolver.java — Strategy 0: Context enrichment
+│   ├── CommandSplitter.java         — Multi-step command parser
+│   ├── IntentNormalizer.java        — Input normalization
+│   └── LevenshteinDistance.java     — Fuzzy matching engine
 ├── safety/
-│   ├── ExecutionGate.java           — Evaluates confidence×danger×ambiguity (EXECUTE/CONFIRM/CLARIFY/REJECT)
-│   ├── DangerClassifier.java        — Danger classification interface
-│   ├── DefaultDangerClassifier.java — Hardcoded list of dangerous commands
-│   ├── ConfirmationManager.java     — Yes/no user confirmation prompt
-│   └── ClarificationPrompt.java     — Ambiguous command clarification prompt
+│   ├── ExecutionGate.java           — Safety evaluator (EXECUTE/CONFIRM/CLARIFY)
+│   ├── ConfirmationManager.java     — Yes/no interaction
+│   └── ClarificationPrompt.java     — Ambiguity resolution
 ├── skill/
-│   ├── Skill.java                   — Skill interface (canHandle + execute)
-│   ├── SkillRegistry.java           — First-match skill dispatcher
-│   ├── AppLauncherSkill.java        — Whitelisted app launcher (chrome, vscode, etc.)
-│   ├── SystemInfoSkill.java         — system-info, java-version
-│   └── FileSystemSkill.java         — list-files
-├── executor/
-│   └── CommandExecutor.java         — ProcessBuilder wrapper
-├── config/
-│   └── CommandLoader.java           — JSON config reader (Gson)
-├── model/
-│   └── SystemCommand.java           — Command model with aliases
-└── speech/
-    ├── SpeechInput.java             — Speech input interface
-    └── WhisperSpeechInput.java      — Whisper STT microservice client
+│   ├── Skill.java                   — Skill interface
+│   ├── BrowserSkill.java            — Context-aware navigation
+│   ├── AppLauncherSkill.java        — Local app launcher
+│   ├── SystemInfoSkill.java         — System metrics
+└── session/
+│   └── SessionContext.java          — In-memory session state
+├── speech/
+│   └── WhisperSpeechInput.java      — STT microservice client
+└── executor/
+    └── CommandExecutor.java         — ProcessBuilder wrapper
 
 whisper-stt/
 ├── server.py                        — Python Whisper STT HTTP server
