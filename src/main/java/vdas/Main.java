@@ -17,6 +17,7 @@ import vdas.skill.FileSystemSkill;
 import vdas.skill.Skill;
 import vdas.skill.SkillRegistry;
 import vdas.skill.SystemInfoSkill;
+import vdas.intent.CommandSplitter;
 import vdas.session.SessionContext;
 import vdas.speech.SpeechInput;
 import vdas.speech.WhisperSpeechInput;
@@ -156,24 +157,24 @@ public class Main {
         AgentState state = AgentState.IDLE;
 
         while (true) {
-            String input;
+            String rawInput;
 
             // ---------- VOICE MODE ----------
             if (voiceMode) {
                 System.out.println("\n[VOICE] Say command (or say/type 'k' to switch, 'q' to quit)");
-                input = speechInput.listen();
+                rawInput = speechInput.listen();
 
-                if (input.isEmpty()) {
+                if (rawInput.isEmpty()) {
                     System.out.print("No speech detected. Type command or press Enter to retry > ");
-                    input = scanner.nextLine().trim();
-                    if (input.isEmpty()) {
+                    rawInput = scanner.nextLine().trim();
+                    if (rawInput.isEmpty()) {
                         continue;
                     }
                 } else {
-                    System.out.println("[VOICE] Recognized: \"" + input + "\"");
+                    System.out.println("[VOICE] Recognized: \"" + rawInput + "\"");
                 }
 
-                if (input.equalsIgnoreCase("k") || input.equalsIgnoreCase("keyboard")) {
+                if (rawInput.equalsIgnoreCase("k") || rawInput.equalsIgnoreCase("keyboard")) {
                     System.out.println("[INFO] Switched to keyboard input.");
                     voiceMode = false;
                     continue;
@@ -183,114 +184,153 @@ public class Main {
             // ---------- KEYBOARD MODE ----------
             else {
                 System.out.print("\nSelect a command (name or number) > ");
-                input = scanner.nextLine().trim();
+                rawInput = scanner.nextLine().trim();
             }
 
             // ── Keyboard shortcut: q / quit ──
             // These bypass the safety gate by design.
             // Voice / intent-based "quit" must always pass through ExecutionGate.
-            if (input.equalsIgnoreCase("q") || input.equalsIgnoreCase("quit")) {
+            if (rawInput.equalsIgnoreCase("q") || rawInput.equalsIgnoreCase("quit")) {
                 System.out.println("Exiting VDAS...");
                 break;
             }
 
-            if (input.isEmpty()) {
+            if (rawInput.isEmpty()) {
                 continue;
             }
 
-            // ---------- COMMAND RESOLUTION → EXECUTION GATE → SKILL DISPATCH ----------
-            Intent intent;
-            try {
-                int index = Integer.parseInt(input) - 1;
-                if (index >= 0 && index < commands.size()) {
-                    intent = intentResolver.resolveByCommand(input, commands.get(index));
-                } else {
-                    System.out.println("[WARN] Invalid index: " + input);
-                    listCommands(commands);
-                    continue;
+            // ── Multi-Step Splitting ──
+            List<String> steps = CommandSplitter.split(rawInput);
+
+            if (steps.size() > 3) {
+                System.out.println("[REJECTED] Too many commands (" + steps.size() + "). Maximum allowed is 3.");
+                continue;
+            }
+
+            // ---------- SEQUENTIAL EXECUTION LOOP ----------
+            for (int stepIndex = 0; stepIndex < steps.size(); stepIndex++) {
+                String input = steps.get(stepIndex);
+                boolean isMultiStep = steps.size() > 1;
+
+                if (isMultiStep) {
+                    System.out.println("\n--- Step " + (stepIndex + 1) + " of " + steps.size() + " ---");
+                    System.out.println("Executing: \"" + input + "\"");
                 }
-            } catch (NumberFormatException e) {
-                intent = intentResolver.resolve(input);
-            }
 
-            // ── Contextual follow-up resolution ──
-            Optional<Intent> contextual = contextualResolver.resolve(intent, sessionContext);
-            if (contextual.isPresent()) {
-                System.out.println("[CONTEXT] Resolved follow-up: \"" + input + "\" → "
-                        + contextual.get().getResolvedCommand().get().getName());
-                intent = contextual.get();
-            }
-
-            // ── Execution gate ──
-            ExecutionGate.Decision decision = gate.evaluate(intent);
-
-            if (decision == ExecutionGate.Decision.REJECT) {
-                System.out.println("[REJECTED] Low confidence: \"" + input + "\"");
-                listCommands(commands);
-                continue;
-            }
-
-            if (decision == ExecutionGate.Decision.CLARIFY) {
-                state = AgentState.AWAITING_CLARIFICATION;
-                Optional<SystemCommand> clarified = clarificationPrompt.ask(intent, scanner);
-                if (clarified.isPresent()) {
-                    // Refinement 2: Re-gate the clarified intent
-                    Intent clarifiedIntent = intent.withResolvedCommand(clarified.get());
-                    ExecutionGate.Decision clarifiedDecision = gate.evaluate(clarifiedIntent);
-
-                    if (clarifiedDecision == ExecutionGate.Decision.REJECT) {
-                        System.out.println("[REJECTED] Clarified command rejected.");
-                        state = AgentState.IDLE;
+                // ---------- COMMAND RESOLUTION → EXECUTION GATE → SKILL DISPATCH ----------
+                Intent intent;
+                try {
+                    int index = Integer.parseInt(input) - 1;
+                    if (index >= 0 && index < commands.size()) {
+                        intent = intentResolver.resolveByCommand(input, commands.get(index));
+                    } else {
+                        System.out.println("[WARN] Invalid index: " + input);
+                        listCommands(commands);
                         continue;
                     }
+                } catch (NumberFormatException e) {
+                    intent = intentResolver.resolve(input);
+                }
 
-                    if (clarifiedDecision == ExecutionGate.Decision.CONFIRM) {
-                        state = AgentState.AWAITING_CONFIRMATION;
-                        if (!confirmationMgr.confirm(clarifiedIntent, scanner)) {
-                            System.out.println("[CANCELLED] Command cancelled by user.");
+                // ── Contextual follow-up resolution ──
+                Optional<Intent> contextual = contextualResolver.resolve(intent, sessionContext);
+                if (contextual.isPresent()) {
+                    System.out.println("[CONTEXT] Resolved follow-up: \"" + input + "\" → "
+                            + contextual.get().getResolvedCommand().get().getName());
+                    intent = contextual.get();
+                }
+
+                // ── Execution gate ──
+                ExecutionGate.Decision decision = gate.evaluate(intent);
+
+                if (decision == ExecutionGate.Decision.REJECT) {
+                    System.out.println("[REJECTED] Low confidence: \"" + input + "\"");
+                    if (!isMultiStep)
+                        listCommands(commands);
+                    if (isMultiStep)
+                        System.out.println("[ABORTED] Remaining steps cancelled.");
+                    break; // Break inner loop (aborts multi-step)
+                }
+
+                if (decision == ExecutionGate.Decision.CLARIFY) {
+                    state = AgentState.AWAITING_CLARIFICATION;
+                    Optional<SystemCommand> clarified = clarificationPrompt.ask(intent, scanner);
+                    if (clarified.isPresent()) {
+                        // Refinement 2: Re-gate the clarified intent
+                        Intent clarifiedIntent = intent.withResolvedCommand(clarified.get());
+                        ExecutionGate.Decision clarifiedDecision = gate.evaluate(clarifiedIntent);
+
+                        if (clarifiedDecision == ExecutionGate.Decision.REJECT) {
+                            System.out.println("[REJECTED] Clarified command rejected.");
                             state = AgentState.IDLE;
-                            continue;
+                            if (isMultiStep)
+                                System.out.println("[ABORTED] Remaining steps cancelled.");
+                            break; // Break inner loop
                         }
-                    }
 
-                    // Dispatch clarified intent
-                    state = AgentState.EXECUTING;
-                    Optional<Skill> clarifiedSkill = skillRegistry.findSkill(clarifiedIntent);
-                    if (clarifiedSkill.isPresent()) {
-                        clarifiedSkill.get().execute(clarifiedIntent);
-                        sessionContext.update(clarifiedIntent,
-                                clarified.get(), clarifiedSkill.get());
+                        if (clarifiedDecision == ExecutionGate.Decision.CONFIRM) {
+                            state = AgentState.AWAITING_CONFIRMATION;
+                            if (!confirmationMgr.confirm(clarifiedIntent, scanner)) {
+                                System.out.println("[CANCELLED] Command cancelled by user.");
+                                state = AgentState.IDLE;
+                                if (isMultiStep)
+                                    System.out.println("[ABORTED] Remaining steps cancelled.");
+                                break; // Break inner loop
+                            }
+                        }
+
+                        // Dispatch clarified intent
+                        state = AgentState.EXECUTING;
+                        Optional<Skill> clarifiedSkill = skillRegistry.findSkill(clarifiedIntent);
+                        if (clarifiedSkill.isPresent()) {
+                            clarifiedSkill.get().execute(clarifiedIntent);
+                            sessionContext.update(clarifiedIntent,
+                                    clarified.get(), clarifiedSkill.get());
+                        } else {
+                            System.out.println("[WARN] No skill found for: " + clarifiedIntent);
+                        }
                     } else {
-                        System.out.println("[WARN] No skill found for: " + clarifiedIntent);
+                        System.out.println("[REJECTED] Ambiguous intent.");
+                        if (isMultiStep)
+                            System.out.println("[ABORTED] Remaining steps cancelled.");
                     }
+                    state = AgentState.IDLE;
+                    if (!clarified.isPresent()) {
+                        break; // Break inner loop
+                    } else {
+                        continue; // Continue inner loop to next step (clarified intent executed successfully)
+                    }
+                }
+
+                if (decision == ExecutionGate.Decision.CONFIRM) {
+                    state = AgentState.AWAITING_CONFIRMATION;
+                    if (!confirmationMgr.confirm(intent, scanner)) {
+                        System.out.println("[CANCELLED] Command cancelled by user.");
+                        state = AgentState.IDLE;
+                        if (isMultiStep)
+                            System.out.println("[ABORTED] Remaining steps cancelled.");
+                        break; // Break inner loop
+                    }
+                }
+
+                // ── Skill dispatch (EXECUTE or confirmed CONFIRM) ──
+                state = AgentState.EXECUTING;
+                Optional<Skill> skill = skillRegistry.findSkill(intent);
+                if (skill.isPresent()) {
+                    skill.get().execute(intent);
+                    sessionContext.update(intent,
+                            intent.getResolvedCommand().orElseThrow(), skill.get());
                 } else {
-                    System.out.println("[REJECTED] Ambiguous intent.");
+                    System.out.println("[WARN] No skill found for: " + intent);
+                    if (!isMultiStep)
+                        listCommands(commands);
+                    if (isMultiStep)
+                        System.out.println("[ABORTED] Remaining steps cancelled.");
+                    state = AgentState.IDLE;
+                    break; // Break inner loop
                 }
                 state = AgentState.IDLE;
-                continue;
-            }
-
-            if (decision == ExecutionGate.Decision.CONFIRM) {
-                state = AgentState.AWAITING_CONFIRMATION;
-                if (!confirmationMgr.confirm(intent, scanner)) {
-                    System.out.println("[CANCELLED] Command cancelled by user.");
-                    state = AgentState.IDLE;
-                    continue;
-                }
-            }
-
-            // ── Skill dispatch (EXECUTE or confirmed CONFIRM) ──
-            state = AgentState.EXECUTING;
-            Optional<Skill> skill = skillRegistry.findSkill(intent);
-            if (skill.isPresent()) {
-                skill.get().execute(intent);
-                sessionContext.update(intent,
-                        intent.getResolvedCommand().orElseThrow(), skill.get());
-            } else {
-                System.out.println("[WARN] No skill found for: " + intent);
-                listCommands(commands);
-            }
-            state = AgentState.IDLE;
-        }
+            } // End of inner sequential execution loop
+        } // End of outer while(true) loop
     }
 }
